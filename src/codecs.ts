@@ -114,7 +114,25 @@ export class TextCodec implements Codec {
   private line(raw: string): ActionProposal | null {
     const trimmed = raw.trim();
 
+    // Inside a block, a nested SEARCH marker means the text being quoted is
+    // itself a conflict example -- a merge guide, a README about this very
+    // protocol. Such an example is balanced: it opens with SEARCH and ends with
+    // REPLACE. Counting depth keeps its inner `=======` and `>>>>>>> REPLACE`
+    // as content instead of letting them cut the anchor in half, which used to
+    // apply an edit built from the first half and damage the file.
     if (this.section === "search") {
+      if (SEARCH_MARKER.test(trimmed)) {
+        this.depth += 1;
+        this.search.push(raw);
+        return null;
+      }
+      if (this.depth > 0) {
+        if (REPLACE_MARKER.test(trimmed)) {
+          this.depth -= 1;
+        }
+        this.search.push(raw);
+        return null;
+      }
       if (DIVIDER_MARKER.test(trimmed)) {
         this.section = "replace";
         return null;
@@ -123,6 +141,18 @@ export class TextCodec implements Codec {
       return null;
     }
     if (this.section === "replace") {
+      if (SEARCH_MARKER.test(trimmed)) {
+        this.depth += 1;
+        this.replace.push(raw);
+        return null;
+      }
+      if (this.depth > 0) {
+        if (REPLACE_MARKER.test(trimmed)) {
+          this.depth -= 1;
+        }
+        this.replace.push(raw);
+        return null;
+      }
       if (REPLACE_MARKER.test(trimmed)) {
         return this.closeBlock();
       }
@@ -148,6 +178,7 @@ export class TextCodec implements Codec {
       this.section = "search";
       this.search = [];
       this.replace = [];
+      this.depth = 0;
       return null;
     }
 
@@ -209,6 +240,9 @@ export class TextCodec implements Codec {
     return { kind: "call", tool: name, arguments: parsed.data };
   }
 
+  /** Nested marker depth inside the current block. See `line`. */
+  private depth = 0;
+
   private closeBlock(): ActionProposal | null {
     const search = this.search.join("\n");
     const replace = this.replace.join("\n");
@@ -217,6 +251,7 @@ export class TextCodec implements Codec {
     this.section = "none";
     this.path = "";
     this.creating = false;
+    this.depth = 0;
     const candidate = ActionProposalSchema.safeParse({
       kind: "edit",
       path,
