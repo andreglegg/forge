@@ -119,6 +119,7 @@ forge compare-little-coder <forge-report> <little-coder-report> <case-manifest>
   --isolate               require a clean Git root and protect the original checkout
   --promote               apply a verified isolated patch to the original
   --allow-risk            override reviewed critical patch-risk findings
+  --hooks                 explicitly enable project lifecycle hooks (headless)
   --mode <mode>           workspace, read-only, or plan
   --stream-json           durable Run events as JSONL plus a final result
 ```
@@ -163,6 +164,26 @@ workflows, and dependency metadata changes. Critical findings retain the patch
 and block promotion unless you inspect it and explicitly add `--allow-risk`.
 This heuristic scan is not proof that a patch is safe. Worktree isolation
 protects repository mutations but is not an OS, network, or process sandbox.
+
+Headless project hooks never run merely because a repository defines them.
+Enable them explicitly with `--hooks`:
+
+```json
+{
+  "hooks": {
+    "sessionStart": [["node", "scripts/forge-start.mjs"]],
+    "beforeVerify": [["npm", "run", "format:check"]],
+    "afterVerify": [["node", "scripts/forge-audit.mjs"]],
+    "sessionEnd": [["node", "scripts/forge-notify.mjs"]]
+  }
+}
+```
+
+Hooks are sequential shell-free token arrays with a scrubbed environment,
+60-second timeout, bounded output, and fail-closed exit semantics. They receive
+`FORGE_HOOK_EVENT`, `FORGE_SESSION_ID`, and post-verification hooks receive
+`FORGE_VERIFIED`. Hooks remain arbitrary repository-controlled programs;
+inspect them before opting in.
 
 `FORGE_TRACE=<path>` writes every turn's exact bytes plus the decoded proposals
 and repairs, one JSON object per line. Reach for it first when a run misbehaves:

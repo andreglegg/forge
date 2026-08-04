@@ -64,10 +64,16 @@ Current sessions restore observable transcript and tool evidence. They do not re
 
 Commands are token arrays and run with `shell: false`. Time, output, environment, and process lifetime are bounded. A narrowly recognized `cd <repo-directory> && <one command>` form is translated into a validated `cwd` while preserving shell-free execution.
 
+## Explicit headless hooks
+
+`src/hooks.ts` runs opt-in `sessionStart`, `beforeVerify`, `afterVerify`, and `sessionEnd` command arrays for headless runs. They share Forge's shell-free bounded command executor, run sequentially, fail fast, and are recorded in final machine-readable results. Repository configuration alone never activates them; `--hooks` is required.
+
+These are lifecycle commands, not a general plugin API. Interactive hooks, third-party tool registration, and versioned extension schemas remain planned.
+
 ## Evaluation
 
 `src/bench.ts` and `src/polyglot.ts` provide reproducible evaluation with executable, model, endpoint, dataset, and configuration fingerprints. Infrastructure failures are persisted but excluded from scored coding results. Promotion claims require paired evidence rather than an isolated score.
 
 ## Known architectural gaps
 
-The current TypeScript product does not yet provide an OS-level sandbox, MCP, lifecycle hooks, plugins, remote workers, or a full-screen TUI. These are roadmap items and must not be inferred from historical documents.
+The current TypeScript product does not yet provide an OS-level sandbox, MCP, a general plugin API, remote workers, interactive lifecycle hooks, or a full-screen TUI. These are roadmap items and must not be inferred from historical documents.

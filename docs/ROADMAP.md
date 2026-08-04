@@ -11,20 +11,21 @@ This roadmap applies to the current TypeScript product. See `STATUS.md` for the 
 - Read-only and plan permission modes enforced at the tool/effect boundary.
 - JSONL event output for automation.
 - Opt-in detached Git-worktree execution, retained binary patches, and verified conflict-checked promotion.
+- Named model profiles, evidence-preserving compaction, promotion risk scanning, and explicit bounded headless lifecycle hooks.
 - Current architecture, security, and operations documentation.
 
 ## 0.2 trusted daily use
 
 - Execution-backend interface with optional Docker/Podman isolation.
 - Network-off defaults and resource limits for sandbox backends.
-- Evidence-preserving semantic context compaction.
+- Stronger semantic compaction and compaction telemetry on top of the shipped deterministic evidence guard.
 - Failure-class-specific retries.
-- Model profiles selected from detected provider/model capabilities.
-- Dependency-change and likely-secret warnings.
+- Automatic capability-aware profile recommendations on top of shipped named profiles.
+- Deeper dependency-confusion and secret analysis on top of shipped patch heuristics.
 
 ## 0.3 integration surface
 
-- Versioned lifecycle-hook API.
+- Versioned general extension API and interactive lifecycle hooks; headless repository-command hooks already ship.
 - MCP client support through Forge permissions, timeouts, output bounds, and audit events.
 - Small skill and verification-adapter API.
 - Stable stream protocol and server mode for IDEs and local automation.

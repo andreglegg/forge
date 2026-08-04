@@ -43,6 +43,7 @@ import {
 } from "./compare.js";
 import { type ContextItem, type ContextReceipt, compile, scoreFiles } from "./context.js";
 import { execBounded, resolveCommandInvocation } from "./exec.js";
+import { formatHookFailure, type HookReport, runProjectHooks } from "./hooks.js";
 import { projectInstructionItems } from "./instructions.js";
 import {
   captureIsolatedPatch,
@@ -156,6 +157,7 @@ const USAGE = [
   "  --isolate                run in a detached temporary Git worktree",
   "  --promote                apply a verified isolated patch to the original",
   "  --allow-risk             override critical patch-risk promotion blocks",
+  "  --hooks                  enable repository hooks for headless runs",
   "  --mode <mode>            workspace, read-only, or plan",
   "  --read-only              deny edits and command execution",
   "  --plan                   plan mode alias",
@@ -815,6 +817,7 @@ export async function main(argv: readonly string[], io: IO = consoleIO): Promise
   const isolate = options["isolate"] === true;
   const promote = options["promote"] === true;
   const allowRisk = options["allow-risk"] === true;
+  const hooksEnabled = options["hooks"] === true;
   if (promote && !isolate) {
     io.err("--promote requires --isolate.");
     return 2;
@@ -829,6 +832,10 @@ export async function main(argv: readonly string[], io: IO = consoleIO): Promise
   }
   if (isolate && (command !== "run" || mode !== "workspace")) {
     io.err("--isolate is currently supported only by `forge run` in workspace mode.");
+    return 2;
+  }
+  if (hooksEnabled && command !== "run" && command !== "plan") {
+    io.err("--hooks is currently supported only by headless `forge run` and `forge plan`.");
     return 2;
   }
   const offline =
@@ -940,6 +947,8 @@ export async function main(argv: readonly string[], io: IO = consoleIO): Promise
         maxTurns: positiveIntegerOption(options["max-turns"], 12),
       },
       verify: project.verify ?? detectCommands(root),
+      hooks: project.hooks ?? {},
+      hooksEnabled,
     };
     if (options["json"] === true) io.out(JSON.stringify(result, null, 2));
     else {
@@ -1464,7 +1473,21 @@ async function gate(
   io: IO,
   quiet: boolean,
   native: boolean,
+  hookReports: HookReport[] = [],
+  hooksEnabled = false,
+  project: ProjectConfig = {},
+  sessionId = "",
 ): Promise<string | null> {
+  if (hooksEnabled) {
+    const before = await runProjectHooks(project.hooks, {
+      repository: workspace.root,
+      sessionId,
+      event: "beforeVerify",
+      signal,
+    });
+    hookReports.push(before);
+    if (!before.ok) return formatHookFailure(before);
+  }
   if (commands.length === 0) {
     // No test command exists, so there is nothing to outrank the claim with --
     // and a claim is not evidence. Benched against a task whose project had no
@@ -1478,7 +1501,19 @@ async function gate(
     // request, with the file in front of you rather than from memory of having
     // written it.
     if (!quiet) io.out("  ⋮ no test command found — re-reading the changes instead");
-    return await reviewChanges(run, workspace, config, task, signal, native);
+    const objection = await reviewChanges(run, workspace, config, task, signal, native);
+    if (hooksEnabled) {
+      const after = await runProjectHooks(project.hooks, {
+        repository: workspace.root,
+        sessionId,
+        event: "afterVerify",
+        verified: objection === null,
+        signal,
+      });
+      hookReports.push(after);
+      if (!after.ok) return formatHookFailure(after);
+    }
+    return objection;
   }
   // Announced through the run's own event stream rather than printed here.
   // Printing directly raced the event subscriber and put this line above the
@@ -1494,6 +1529,17 @@ async function gate(
     { cwd: workspace.root, signal },
   );
   run.verified(report.passed);
+  if (hooksEnabled) {
+    const after = await runProjectHooks(project.hooks, {
+      repository: workspace.root,
+      sessionId,
+      event: "afterVerify",
+      verified: report.passed,
+      signal,
+    });
+    hookReports.push(after);
+    if (!after.ok) return formatHookFailure(after);
+  }
   return report.passed ? null : formatForModel(report);
 }
 
@@ -1632,6 +1678,8 @@ async function headless(
   const sessions = new SessionStore(workspace.root);
   const sessionId = newSessionId();
   const tracePath = traceFileFor(workspace.root, sessionId);
+  const hooksEnabled = options["hooks"] === true;
+  const hookReports: HookReport[] = [];
   const collected: RunEvent[] = [];
   const drained = (async () => {
     for await (const event of run.events()) {
@@ -1664,6 +1712,19 @@ async function headless(
     { role: "user", content: `${context.text}\n\n${task}` },
   ];
   let code = 1;
+  if (hooksEnabled) {
+    const started = await runProjectHooks(project.hooks, {
+      repository: workspace.root,
+      sessionId,
+      event: "sessionStart",
+      signal: controller.signal,
+    });
+    hookReports.push(started);
+    if (!started.ok) {
+      run.fail(formatHookFailure(started));
+      code = 2;
+    }
+  }
   const progress = new ProgressWatch();
   const commands =
     options["no-verify"] === true ? [] : (project.verify ?? detectCommands(workspace.root));
@@ -1671,7 +1732,7 @@ async function headless(
   const maxTurns = positiveIntegerOption(options["max-turns"], 12);
   const verificationCadence = new VerificationCadence();
   try {
-    for (let turn = 0; turn < maxTurns; turn += 1) {
+    for (let turn = 0; code !== 2 && turn < maxTurns; turn += 1) {
       const meter = new TurnMeter(() => Date.now());
       meter.start();
       const result = await oneTurn(
@@ -1701,6 +1762,10 @@ async function headless(
                 io,
                 asJson || streamJson,
                 native,
+                hookReports,
+                hooksEnabled,
+                project,
+                sessionId,
               )
             : null;
         if (objection === null) {
@@ -1726,6 +1791,17 @@ async function headless(
     run.fail(error instanceof Error ? error.message : String(error));
     code = 1;
   }
+  if (hooksEnabled) {
+    const ended = await runProjectHooks(project.hooks, {
+      repository: workspace.root,
+      sessionId,
+      event: "sessionEnd",
+      verified: code === 0,
+      signal: controller.signal,
+    });
+    hookReports.push(ended);
+    if (!ended.ok) code = 2;
+  }
   run.close();
   await drained;
   sessions.save(sessionId, run.journal);
@@ -1737,6 +1813,11 @@ async function headless(
     mode,
     usage: { ...usage, actions },
     state: run.snapshot(),
+    hooks: {
+      enabled: hooksEnabled,
+      ok: hookReports.every((report) => report.ok),
+      reports: hookReports,
+    },
   };
   let finalCode = code;
   let metadata: Readonly<Record<string, unknown>> = {};
@@ -1759,6 +1840,11 @@ async function headless(
     ...metadata,
     ok: finalCode === 0,
   };
+  if (!asJson && !streamJson) {
+    for (const report of hookReports.filter((candidate) => !candidate.ok)) {
+      io.err(formatHookFailure(report));
+    }
+  }
   if (streamJson) io.out(JSON.stringify({ type: "result", result: finalDocument }));
   else if (asJson) {
     io.out(JSON.stringify(finalDocument, null, 2));

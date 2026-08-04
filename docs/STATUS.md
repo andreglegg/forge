@@ -24,8 +24,9 @@ This table describes the executable TypeScript product in `src/`.
 | Stream-JSON event protocol | Shipped | `--stream-json` emits durable Run events as JSONL followed by one result record. |
 | Disposable Git worktrees | Shipped (opt-in) | `forge run --isolate` requires a clean Git root, executes in a detached temporary worktree, retains a binary patch, and transfers session evidence. `--promote` applies only a verified, conflict-checked patch. |
 | Promotion risk scan | Shipped | Added patch lines are checked for likely secrets, install lifecycle scripts, dangerous workflows, and dependency metadata. Critical findings block promotion unless explicitly overridden with `--allow-risk`. |
+| Headless lifecycle hooks | Shipped (opt-in) | `sessionStart`, `beforeVerify`, `afterVerify`, and `sessionEnd` token-array commands run only with `--hooks`; failures are authoritative and reported in machine output. |
 | Container/VM sandbox | Planned | No OS-level isolation today. |
-| MCP, hooks, plugins | Planned | No extension API in the TypeScript core today. |
+| MCP and plugin API | Planned | No third-party tool/extension boundary in the TypeScript core today. |
 | Remote workers / IDE protocol | Planned | Expected to consume a future stable event/tool boundary. |
 | Full-screen TUI | Not planned for 0.1 | The scrollback-native terminal remains the primary interface. |
 

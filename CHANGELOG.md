@@ -21,6 +21,7 @@ All notable product changes are recorded here. Forge follows semantic versioning
 - `forge run --isolate` detached Git-worktree execution with retained binary patches and transferred session evidence.
 - `--promote` for verified, conflict-checked patch application back to the original clean checkout.
 - Promotion-time patch risk scanning with an explicit `--allow-risk` override for reviewed critical findings.
+- Explicit bounded headless lifecycle hooks for session start, verification boundaries, and session end.
 
 ### Reliability baseline
 
@@ -32,6 +33,6 @@ All notable product changes are recorded here. Forge follows semantic versioning
 ### Known limitations
 
 - No OS-level process, network, or resource sandbox; Git-worktree isolation protects repository mutations only.
-- No MCP, plugin, hook, or remote-worker API.
+- No MCP, general plugin, interactive-hook, or remote-worker API.
 - Session resume restores observable history but not an in-flight provider request.
 - Isolation is opt-in and currently available only for headless workspace-mode runs from a fully clean Git root.

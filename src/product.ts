@@ -17,6 +17,17 @@ const ModelProfileSchema = z
   })
   .strict();
 
+const HookCommandsSchema = z.array(z.array(z.string()).min(1)).max(20);
+
+const HooksSchema = z
+  .object({
+    sessionStart: HookCommandsSchema.optional(),
+    beforeVerify: HookCommandsSchema.optional(),
+    afterVerify: HookCommandsSchema.optional(),
+    sessionEnd: HookCommandsSchema.optional(),
+  })
+  .strict();
+
 const ProjectConfigSchema = z
   .object({
     url: z.string().url().optional(),
@@ -24,10 +35,12 @@ const ProjectConfigSchema = z
     verify: z.array(z.array(z.string()).min(1)).optional(),
     profile: z.string().min(1).optional(),
     profiles: z.record(z.string().min(1), ModelProfileSchema).optional(),
+    hooks: HooksSchema.optional(),
   })
   .strict();
 
 export type ModelProfile = z.infer<typeof ModelProfileSchema>;
+export type ProjectHooks = z.infer<typeof HooksSchema>;
 export type ProjectConfig = z.infer<typeof ProjectConfigSchema>;
 
 export interface SelectedModelProfile {

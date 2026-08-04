@@ -93,6 +93,14 @@ For automation, `--json` writes one final document. `--stream-json` writes one
 JSON object per durable Run event and ends with a `{"type":"result",...}` record.
 Do not combine the two modes.
 
+Headless lifecycle hooks are explicit opt-in repository code. Define token-array
+commands under `hooks.sessionStart`, `hooks.beforeVerify`, `hooks.afterVerify`,
+and `hooks.sessionEnd`, then add `--hooks` to `forge run` or `forge plan`.
+Hooks execute sequentially with no shell, a scrubbed environment, bounded output,
+and a 60-second timeout. Failures block the run or final exit and appear in JSON
+results. Inspect hook commands before enabling them; they can execute arbitrary
+repository-controlled programs.
+
 ## 3. What it is good at
 
 | task | evidence |
@@ -132,11 +140,13 @@ deciding *what* to build. Do not assume it transfers.
 2. **Set `verify` in `forge.json`.** A run with no verification command reports
    that it could not verify rather than pretending — but you get far more from
    a real command.
-3. **Read the diff.** Its self-report is not evidence. The one measured failure
+3. **Do not enable unfamiliar hooks.** Forge never auto-runs configured hooks;
+   `--hooks` is your explicit consent to execute those repository commands.
+4. **Read the diff.** Its self-report is not evidence. The one measured failure
    mode that matters is a confident wrong finish, and the defence is your eyes.
-4. **Prefer many small tasks to one large one.** The 14/14 tasks are all
+5. **Prefer many small tasks to one large one.** The 14/14 tasks are all
    single-purpose. Nothing suggests a 10-step request behaves as well.
-5. **Re-run your tests yourself after it finishes.** Since 2026-08-04 the
+6. **Re-run your tests yourself after it finishes.** Since 2026-08-04 the
    completion gate re-runs a passing suite to confirm it (`bench/PROJECT_TRIAL.md`),
    but your suite is yours.
 
