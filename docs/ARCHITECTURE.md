@@ -46,6 +46,14 @@ Long transcripts are bounded by retaining stable setup messages and the newest e
 
 `src/verify.ts` detects common project checks or uses the explicit `verify` array from `forge.json`. A successful completion is independently verified. Passing suites are repeated once to detect a non-reproducible pass. Without a test command, Forge performs a strict read-back review and fails closed if it cannot establish completion.
 
+## Isolated execution and promotion
+
+`src/isolation.ts` provides the first execution-backend boundary. `forge run --isolate` creates a detached temporary Git worktree from a fully clean repository root. The agent, verifier, session journal, traces, and retained objects operate inside that worktree.
+
+Finalization captures tracked changes and non-ignored new files as a binary Git patch under the original repository's ignored `.forge/isolated/` directory. Evidence is transferred back before cleanup. `--promote` is allowed only after a successful verified run and rechecks the original commit, working-tree cleanliness, and `git apply --check` before applying the patch.
+
+This isolates repository mutations, not processes. Commands still execute on the host until a container backend exists.
+
 ## Persistence and recovery
 
 Every turn is recorded under `.forge/traces/`. Session journals are crash-tolerant append-only JSONL with final atomic repair. The CLI can list, show, resume into an interactive transcript, and safely undo committed mutations when the current file revision still matches the session record.
@@ -62,4 +70,4 @@ Commands are token arrays and run with `shell: false`. Time, output, environment
 
 ## Known architectural gaps
 
-The current TypeScript product does not yet provide an OS-level sandbox, automatic Git-worktree transaction promotion, MCP, lifecycle hooks, plugins, remote workers, or a full-screen TUI. These are roadmap items and must not be inferred from historical documents.
+The current TypeScript product does not yet provide an OS-level sandbox, MCP, lifecycle hooks, plugins, remote workers, or a full-screen TUI. These are roadmap items and must not be inferred from historical documents.

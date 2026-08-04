@@ -35,6 +35,15 @@ Repository files, user instructions, generated model output, tool output, depend
 - Hidden reasoning blocks are not required or exposed; traces store observable model text, decoded actions, repairs, and results.
 - Sessions and traces are repository-local under ignored `.forge` state.
 
+### Isolated Git worktrees
+
+- `forge run --isolate` requires the selected path to be the Git root and the entire working tree to be clean, including untracked files.
+- The run executes against a detached temporary worktree created from the current commit.
+- Tracked edits and non-ignored new files are captured as a binary-capable Git patch under `.forge/isolated/` in the original repository.
+- Without `--promote`, the original working tree is never changed.
+- `--promote` is incompatible with `--no-verify`. Promotion rechecks the original HEAD, requires the original tree to remain clean, runs `git apply --check`, and only then applies the patch.
+- Session, trace, and retained-object evidence is copied back before the temporary worktree is removed.
+
 ### Verification
 
 - The model's success claim is not authoritative.
@@ -51,14 +60,13 @@ The current TypeScript product does not yet provide:
 - container, VM, seccomp, AppArmor, or restricted-user isolation;
 - network denial for repository commands;
 - CPU, memory, process-count, or disk quotas beyond command timeout/output bounds;
-- automatic disposable Git-worktree execution and verified promotion;
 - dependency-confusion or secret scanning;
 - a third-party plugin or MCP permission boundary.
 
-Do not run Forge with elevated privileges or use autonomous approval on an untrusted repository. Use a clean branch or disposable clone and review the final diff.
+Do not run Forge with elevated privileges or use autonomous approval on an untrusted repository. Git-worktree isolation protects the user's selected checkout from unpromoted edits, but it does not isolate processes, network, credentials available outside Forge's scrubbed command environment, or the host filesystem.
 
 ## Production-hardening direction
 
-The planned execution-backend interface will add disposable Git worktrees first, followed by optional container backends with network-off defaults and resource limits. External tools, MCP servers, hooks, and plugins must pass through the same permission, timeout, output-bound, and audit-journal boundaries as built-in tools.
+The next execution-backend layer is optional container isolation with network-off defaults, resource limits, and read-only host mounts. External tools, MCP servers, hooks, and plugins must pass through the same permission, timeout, output-bound, and audit-journal boundaries as built-in tools.
 
 Security reports should include a reproducible case and affected version. Do not include real credentials or private repository content.

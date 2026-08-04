@@ -89,6 +89,10 @@ Conversion is a floor on quality, not a substitute for it.
 forge                     interactive chat in the current directory
 forge run "<task>"        one shot, exit 0 on success
 forge run "<task>" --yes  approve workspace effects (CI, batch)
+forge run "<task>" --yes --isolate
+                          run in a detached clean Git worktree and retain a patch
+forge run "<task>" --yes --isolate --promote
+                          apply the verified patch after conflict checks
 forge plan "<task>"       inspect and return a plan without effects
 forge run "<question>" --read-only
 forge doctor              provider/model/verifier diagnostics
@@ -110,6 +114,8 @@ forge compare-little-coder <forge-report> <little-coder-report> <case-manifest>
                           protocol (OpenAI and Anthropic wires, auto-detected)
   --task-packet           include bounded student-facing exercise docs
   --batch-actions         invite bounded independent reads/known-file edits
+  --isolate               require a clean Git root and protect the original checkout
+  --promote               apply a verified isolated patch to the original
   --mode <mode>           workspace, read-only, or plan
   --stream-json           durable Run events as JSONL plus a final result
 ```
@@ -118,6 +124,14 @@ It defaults to `http://127.0.0.1:8790/v1` and asks the endpoint what it serves
 via `/v1/models`. Coding commands also perform a minimal completion preflight,
 so a gateway that advertises an inactive model profile fails before the agent
 starts. Override with `--url` / `FORGE_URL` and `--model` / `FORGE_MODEL`.
+
+`--isolate` is the safest headless repository mode currently shipped. It requires
+the selected path to be the Git root and completely clean, including untracked
+files. The model and verifier run in a detached temporary worktree. Forge writes
+the resulting binary patch to `.forge/isolated/`; without `--promote`, the
+original remains unchanged. Promotion requires verification and rechecks HEAD,
+cleanliness, and `git apply --check`. This protects repository mutations but is
+not an OS, network, or process sandbox.
 
 `FORGE_TRACE=<path>` writes every turn's exact bytes plus the decoded proposals
 and repairs, one JSON object per line. Reach for it first when a run misbehaves:

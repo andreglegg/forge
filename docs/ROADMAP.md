@@ -10,11 +10,11 @@ This roadmap applies to the current TypeScript product. See `STATUS.md` for the 
 - Top-level `continue` and `resume` commands built on retained sessions.
 - Read-only and plan permission modes enforced at the tool/effect boundary.
 - JSONL event output for automation.
+- Opt-in detached Git-worktree execution, retained binary patches, and verified conflict-checked promotion.
 - Current architecture, security, and operations documentation.
 
 ## 0.2 trusted daily use
 
-- Disposable Git-worktree execution with verified, reviewed promotion.
 - Execution-backend interface with optional Docker/Podman isolation.
 - Network-off defaults and resource limits for sandbox backends.
 - Evidence-preserving semantic context compaction.

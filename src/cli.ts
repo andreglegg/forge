@@ -43,6 +43,14 @@ import {
 import { type ContextItem, type ContextReceipt, compile, scoreFiles } from "./context.js";
 import { execBounded, resolveCommandInvocation } from "./exec.js";
 import { projectInstructionItems } from "./instructions.js";
+import {
+  captureIsolatedPatch,
+  createIsolatedWorktree,
+  type IsolatedWorktree,
+  promoteIsolatedPatch,
+  removeIsolatedWorktree,
+  transferIsolatedArtifacts,
+} from "./isolation.js";
 import { streamNative } from "./native.js";
 import { load as loadObject, store as storeObject } from "./objects.js";
 import { runPolyglot } from "./polyglot.js";
@@ -139,6 +147,8 @@ const USAGE = [
   "  --task-packet            include bounded exercise docs in initial context",
   "  --batch-actions          invite bounded independent actions in one reply",
   "  --yes                    approve every action (headless, CI)",
+  "  --isolate                run in a detached temporary Git worktree",
+  "  --promote                apply a verified isolated patch to the original",
   "  --mode <mode>            workspace, read-only, or plan",
   "  --read-only              deny edits and command execution",
   "  --plan                   plan mode alias",
@@ -811,6 +821,20 @@ export async function main(argv: readonly string[], io: IO = consoleIO): Promise
     io.err(error instanceof Error ? error.message : String(error));
     return 2;
   }
+  const isolate = options["isolate"] === true;
+  const promote = options["promote"] === true;
+  if (promote && !isolate) {
+    io.err("--promote requires --isolate.");
+    return 2;
+  }
+  if (promote && options["no-verify"] === true) {
+    io.err("--promote requires verification; remove --no-verify.");
+    return 2;
+  }
+  if (isolate && (command !== "run" || mode !== "workspace")) {
+    io.err("--isolate is currently supported only by `forge run` in workspace mode.");
+    return 2;
+  }
   const offline =
     command === "replay" ||
     command === "compare" ||
@@ -1293,17 +1317,54 @@ export async function main(argv: readonly string[], io: IO = consoleIO): Promise
     return records.length === 0 ? 2 : 0;
   }
   if (command === "run" || command === "plan") {
-    return await headless(
-      rest.join(" ").trim(),
-      workspace,
-      config,
-      controller,
-      options,
-      io,
-      native,
-      project,
-      mode,
-    );
+    const task = rest.join(" ").trim();
+    if (!isolate) {
+      return await headless(
+        task,
+        workspace,
+        config,
+        controller,
+        options,
+        io,
+        native,
+        project,
+        mode,
+      );
+    }
+    let isolated: IsolatedWorktree;
+    try {
+      isolated = await createIsolatedWorktree(root, newSessionId());
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (options["json"] === true) {
+        io.out(JSON.stringify({ ok: false, error: "isolation_setup", message }, null, 2));
+      } else if (options["stream-json"] === true) {
+        io.out(JSON.stringify({ type: "error", error: "isolation_setup", message }));
+      } else io.err(`Isolation setup failed: ${message}`);
+      return 2;
+    }
+    try {
+      return await headless(
+        task,
+        new Workspace(isolated.root),
+        config,
+        controller,
+        options,
+        io,
+        native,
+        project,
+        mode,
+        isolatedFinalizer(isolated, promote, options, io),
+      );
+    } catch (error) {
+      try {
+        await removeIsolatedWorktree(isolated);
+      } catch {
+        // The original exception is the causal failure. The worktree remains
+        // discoverable through Git if cleanup also failed.
+      }
+      throw error;
+    }
   }
   if (command === "continue" || command === "resume") {
     return await interactive(
@@ -1394,6 +1455,95 @@ async function gate(
   return report.passed ? null : formatForModel(report);
 }
 
+interface HeadlessResultDocument {
+  readonly ok: boolean;
+  readonly session: string;
+  readonly mode: PermissionMode;
+  readonly usage: Readonly<Record<string, number>>;
+  readonly state: ReturnType<Run["snapshot"]>;
+  readonly [key: string]: unknown;
+}
+
+interface HeadlessFinalization {
+  readonly code?: number | undefined;
+  readonly metadata?: Readonly<Record<string, unknown>> | undefined;
+}
+
+type HeadlessFinalizer = (result: HeadlessResultDocument) => Promise<HeadlessFinalization>;
+
+function isolatedFinalizer(
+  worktree: IsolatedWorktree,
+  promotionRequested: boolean,
+  options: Readonly<Record<string, string | boolean>>,
+  io: IO,
+): HeadlessFinalizer {
+  return async (result) => {
+    const errors: string[] = [];
+    let patch: Awaited<ReturnType<typeof captureIsolatedPatch>> | null = null;
+    let promoted = false;
+    try {
+      patch = await captureIsolatedPatch(worktree);
+    } catch (error) {
+      errors.push(
+        `could not capture isolated patch: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+    try {
+      transferIsolatedArtifacts(worktree, result.session);
+    } catch (error) {
+      errors.push(
+        `could not transfer session evidence: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+    if (promotionRequested && result.ok && patch?.changed === true) {
+      try {
+        await promoteIsolatedPatch(worktree, patch);
+        promoted = true;
+      } catch (error) {
+        errors.push(
+          `could not promote isolated patch: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
+    try {
+      await removeIsolatedWorktree(worktree);
+    } catch (error) {
+      errors.push(
+        `could not remove isolated worktree: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+
+    const patchPath = patch === null ? null : path.relative(worktree.repository, patch.file);
+    if (options["json"] !== true && options["stream-json"] !== true) {
+      if (patch?.changed === true) {
+        io.out(
+          promoted
+            ? `isolated patch promoted · ${patchPath}`
+            : `isolated patch retained; original repository unchanged · ${patchPath}`,
+        );
+      } else if (patch !== null) {
+        io.out("isolated run produced no repository changes");
+      }
+      for (const error of errors) io.err(error);
+    }
+    return {
+      ...(errors.length > 0 ? { code: 2 } : {}),
+      metadata: {
+        isolation: {
+          id: worktree.id,
+          baseCommit: worktree.baseCommit,
+          patch: patchPath,
+          changed: patch?.changed ?? null,
+          bytes: patch?.bytes ?? null,
+          promotionRequested,
+          promoted,
+          errors,
+        },
+      },
+    };
+  };
+}
+
 async function headless(
   task: string,
   workspace: Workspace,
@@ -1404,6 +1554,7 @@ async function headless(
   native: boolean,
   project: ProjectConfig,
   mode: PermissionMode,
+  finalize?: HeadlessFinalizer,
 ): Promise<number> {
   if (!task) {
     io.err("forge run needs a task description.");
@@ -1514,22 +1665,43 @@ async function headless(
   sessions.save(sessionId, run.journal);
   const usage = summarize(usages);
   const actions = collected.filter((event) => event.type === "action.proposed").length;
-  const resultDocument = {
+  const resultDocument: HeadlessResultDocument = {
     ok: code === 0,
     session: sessionId,
     mode,
     usage: { ...usage, actions },
     state: run.snapshot(),
   };
-  if (streamJson) io.out(JSON.stringify({ type: "result", result: resultDocument }));
+  let finalCode = code;
+  let metadata: Readonly<Record<string, unknown>> = {};
+  if (finalize !== undefined) {
+    try {
+      const finalized = await finalize(resultDocument);
+      finalCode = finalized.code ?? finalCode;
+      metadata = finalized.metadata ?? {};
+    } catch (error) {
+      finalCode = 2;
+      metadata = {
+        finalization: {
+          error: error instanceof Error ? error.message : String(error),
+        },
+      };
+    }
+  }
+  const finalDocument: HeadlessResultDocument = {
+    ...resultDocument,
+    ...metadata,
+    ok: finalCode === 0,
+  };
+  if (streamJson) io.out(JSON.stringify({ type: "result", result: finalDocument }));
   else if (asJson) {
-    io.out(JSON.stringify(resultDocument, null, 2));
+    io.out(JSON.stringify(finalDocument, null, 2));
   } else {
     io.out(
       `${usage.turns} ${usage.turns === 1 ? "turn" : "turns"} · ${usage.chars} chars · ${usage.seconds.toFixed(1)}s · ${usage.charsPerSecond.toFixed(0)} ch/s · session ${sessionId}`,
     );
   }
-  return code;
+  return finalCode;
 }
 
 /**

@@ -16,6 +16,8 @@ All notable product changes are recorded here. Forge follows semantic versioning
 - Capability-enforced `workspace`, `read-only`, and `plan` modes.
 - `forge continue` / `forge resume` top-level session continuation.
 - `--stream-json` durable event and final-result protocol.
+- `forge run --isolate` detached Git-worktree execution with retained binary patches and transferred session evidence.
+- `--promote` for verified, conflict-checked patch application back to the original clean checkout.
 
 ### Reliability baseline
 
@@ -26,7 +28,7 @@ All notable product changes are recorded here. Forge follows semantic versioning
 
 ### Known limitations
 
-- No OS-level sandbox or automatic disposable-worktree promotion.
+- No OS-level process, network, or resource sandbox; Git-worktree isolation protects repository mutations only.
 - No MCP, plugin, hook, or remote-worker API.
 - Session resume restores observable history but not an in-flight provider request.
-- Normal runs still edit the selected working tree; disposable-worktree promotion remains planned.
+- Isolation is opt-in and currently available only for headless workspace-mode runs from a fully clean Git root.

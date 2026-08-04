@@ -42,6 +42,10 @@ a model that does not emit compiling code. See `bench/MODEL_SCALING.md`.
 forge                          # interactive, in the current directory
 forge run "<task>"             # one shot, exits 0 on success
 forge run "<task>" --yes       # approve workspace effects (CI, batch)
+forge run "<task>" --yes --isolate
+                               # clean detached worktree; original unchanged
+forge run "<task>" --yes --isolate --promote
+                               # verify, conflict-check, then apply the patch
 forge plan "<task>"            # read/search and return a plan; no effects
 forge run "<question>" --read-only
 forge continue [id]            # reopen interactive chat with retained history
@@ -96,9 +100,12 @@ deciding *what* to build. Do not assume it transfers.
 
 ## 5. How to actually use it safely
 
-1. **Work on a branch, or commit first.** Every session is reversible with
-   `forge undo`, but a clean git state is the real backstop. Forge does not yet
-   isolate normal runs in disposable Git worktrees.
+1. **Prefer `--isolate` for headless changes.** It requires the selected path
+   to be the Git root and completely clean, including untracked files. The run
+   happens in a detached temporary worktree and leaves a patch under
+   `.forge/isolated/`. Add `--promote` only when you want a successful verified
+   run applied after HEAD, cleanliness, and `git apply --check` are revalidated.
+   This protects repository mutations, not the host from repository scripts.
 2. **Set `verify` in `forge.json`.** A run with no verification command reports
    that it could not verify rather than pretending — but you get far more from
    a real command.
@@ -115,12 +122,16 @@ deciding *what* to build. Do not assume it transfers.
 ```sh
 cd ~/some/project
 git switch -c forge-trial
+# commit or stash every tracked and untracked change first
 
-forge run "add <one small, well-specified thing>" --yes
-git diff                       # read it
+forge run "add <one small, well-specified thing>" --yes --isolate
+cat .forge/isolated/*.patch    # inspect the retained patch; checkout unchanged
+
+forge run "add <one small, well-specified thing>" --yes --isolate --promote
+git diff                       # read the promoted result
 npm test                       # your tests, not its claim
 
-forge undo                     # if you dislike it
+forge undo                     # if you dislike a promoted session
 ```
 
 Then try interactive `forge` for something exploratory, and use `/context` when

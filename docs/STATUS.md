@@ -20,7 +20,7 @@ This table describes the executable TypeScript product in `src/`.
 | Doctor/init/config commands | Shipped | Strict `forge.json` validation, idempotent initialization, resolved config output, verifier detection, and live provider/model diagnostics. |
 | Read-only/plan permission modes | Shipped | Enforced by the Run actor before preview, approval, or execution; `--yes` cannot bypass them. |
 | Stream-JSON event protocol | Shipped | `--stream-json` emits durable Run events as JSONL followed by one result record. |
-| Disposable Git worktrees | Planned | Current runs edit the selected working tree directly. |
+| Disposable Git worktrees | Shipped (opt-in) | `forge run --isolate` requires a clean Git root, executes in a detached temporary worktree, retains a binary patch, and transfers session evidence. `--promote` applies only a verified, conflict-checked patch. |
 | Container/VM sandbox | Planned | No OS-level isolation today. |
 | MCP, hooks, plugins | Planned | No extension API in the TypeScript core today. |
 | Remote workers / IDE protocol | Planned | Expected to consume a future stable event/tool boundary. |

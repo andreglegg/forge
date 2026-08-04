@@ -102,6 +102,32 @@ describe("project configuration", () => {
   });
 });
 
+describe("isolated command validation", () => {
+  test("rejects unsafe or unsupported flag combinations before provider access", async () => {
+    await withRepo(async (root) => {
+      const promoteOnly = capturedIO();
+      const promoteOnlyCode = await main(
+        ["run", "task", "--repo", root, "--promote"],
+        promoteOnly.io,
+      );
+      const unverified = capturedIO();
+      const unverifiedCode = await main(
+        ["run", "task", "--repo", root, "--isolate", "--promote", "--no-verify"],
+        unverified.io,
+      );
+      const plan = capturedIO();
+      const planCode = await main(["plan", "task", "--repo", root, "--isolate"], plan.io);
+
+      expect(promoteOnlyCode).toBe(2);
+      expect(promoteOnly.err).toEqual([expect.stringMatching(/requires --isolate/i)]);
+      expect(unverifiedCode).toBe(2);
+      expect(unverified.err).toEqual([expect.stringMatching(/requires verification/i)]);
+      expect(planCode).toBe(2);
+      expect(plan.err).toEqual([expect.stringMatching(/only.*forge run.*workspace mode/i)]);
+    });
+  });
+});
+
 describe("permission modes", () => {
   test("resolves explicit and command aliases", () => {
     expect(resolvePermissionMode({})).toBe("workspace");
