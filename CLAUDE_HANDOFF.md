@@ -12,7 +12,7 @@ engineering state.
 | Local suite (15 tasks, 3 trials) | **14/15** every trial, 0 false successes | `bench/DECOMPOSE_INSTRUCTION.md` |
 | Greenfield build | works, then over-reports | same |
 | Model scaling | 7B 4.8% / 14B 11.9-14.3% / 30B-MoE 64-67% | `bench/MODEL_SCALING.md` |
-| Tests | **311 pass, 1 skip** | `npm run check` on 2026-08-05 |
+| Tests | **317 pass, 1 skip** | `npm run check` on 2026-08-05 |
 
 ## Measurement discipline (read before running an experiment)
 
@@ -56,23 +56,23 @@ Git-worktree isolation and verified promotion, named model profiles,
 evidence-preserving compaction, promotion risk scanning, and explicit bounded
 headless lifecycle hooks.
 
-The current working slice adds dependency-aware repository intelligence:
+The current working slice adds revision-bound TypeScript/JavaScript declaration intelligence:
 
-- `docs/PRODUCT_PLAN.md` defines ordered milestones across project intelligence,
-  reliable execution, integration boundaries, and release maturity.
-- `src/relationships.ts` builds a bounded static graph for relative TypeScript
-  and JavaScript imports, export-from declarations, `require`, and string-literal
-  dynamic imports.
-- `RELATED <path>` has text/native parity and reports nearest package ownership,
-  direct dependencies, inbound dependents, and related tests.
-- The same resolver replaces the old one-pattern import follower in task context,
-  including TypeScript `.js` specifiers and directory indexes.
-- One graph scan is bounded to 10,000 supported source files and 512 KiB per
-  file. Package imports, path aliases, package exports, symbols, and language-
-  server references remain explicitly unsupported.
-- A scripted provider test proves the full tool loop on a 225-file deep project.
-- `npm run check` passes 311 tests with one intentional pty skip; `npm run build`,
-  `npm pack --dry-run`, and `git diff --check` also pass.
+- `src/symbols.ts` uses a pinned TypeScript 5.9 compiler API while Forge itself
+  remains compiled with TypeScript 7.
+- `SYMBOL <name>` has text/native parity and reports exact top-level declarations
+  plus named class/interface/enum members with line/column ranges, export status,
+  and the revision of the parsed source.
+- Symbol scans share repository visibility rules and are bounded to 10,000
+  supported files, 512 KiB per file, and 100 returned declarations.
+- The parser runtime is lazy-loaded only when `SYMBOL` executes, so ordinary
+  parallel CLI runs do not pay its startup and memory cost.
+- This is syntax indexing, not a language server: semantic aliases, inferred
+  types, overload identity, locals, references/callers, package imports, path
+  aliases, and package exports remain explicitly unsupported.
+- A scripted provider test proves the full tool loop on a 221-file deep project.
+- `npm run check` passes 317 tests with one intentional pty skip. The focused
+  project/symbol/protocol suite passes 52 tests.
 
 ### Historical verification-gate context
 
@@ -84,23 +84,20 @@ failed 1 run in 6. Confirmation prevents that pass from laundering a bad change.
 
 ## Open, in product-plan order
 
-1. **TypeScript/JavaScript symbol declarations and exact source locations.**
-   Build on `src/relationships.ts` without pretending regex extraction is a
-   language server.
-2. **Reference lookup and dependency-backed context selection.** Use exact
+1. **Reference lookup and dependency-backed context selection.** Use exact
    declarations plus bounded dependency evidence to find callers whose filenames
    do not share task vocabulary.
-3. **Change-impact analysis and focused verification planning.** Map run-mutated
+2. **Change-impact analysis and focused verification planning.** Map run-mutated
    paths to packages, inbound dependency closure, and candidate tests while
    preserving the authoritative full completion gate.
-4. **Failure-class-specific recovery.** Replace generic retry prompting with
+3. **Failure-class-specific recovery.** Replace generic retry prompting with
    bounded strategies for syntax, type, test, timeout, infrastructure, and
    no-progress failures.
-5. **Execution-backend interface and optional Docker/Podman isolation.** Current
+4. **Execution-backend interface and optional Docker/Podman isolation.** Current
    worktrees isolate repository mutations only; commands still run on the host.
-6. **Versioned server/event contract**, followed by IDE clients, MCP, and a small
+5. **Versioned server/event contract**, followed by IDE clients, MCP, and a small
    permissioned extension API.
-7. **Benchmark follow-up.** The second full-225 replication and current Little
+6. **Benchmark follow-up.** The second full-225 replication and current Little
    Coder comparison remain useful, but no new product slice should claim a score
    gain without paired evidence.
 

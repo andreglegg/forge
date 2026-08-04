@@ -592,6 +592,17 @@ function makeTools(workspace: Workspace, signal?: AbortSignal) {
             output: relatedRepository(workspace.root, String(args["path"] ?? "")).output,
           };
         }
+        if (proposal.tool === "symbol") {
+          // Load the parser only for symbol work. Ordinary runs should not pay
+          // the compiler API's startup and memory cost, especially in parallel CI.
+          const { findRepositorySymbols } = await import("./symbols.js");
+          return {
+            ok: true,
+            output: findRepositorySymbols(workspace.root, String(args["query"] ?? ""), {
+              path: String(args["path"] ?? "."),
+            }).output,
+          };
+        }
         if (proposal.tool === "run") {
           // The command reaches here only after the approval gate: for `run`
           // the human is the allowlist. How it executes is still bounded --

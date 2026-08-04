@@ -13,7 +13,7 @@ Repository files, user instructions, generated model output, tool output, depend
 - `.git`, `.forge`, `.codex-bridge`, dependency/build/cache directories, common secret files, `.docs`, and `.meta` are excluded from ordinary repository discovery. Exercise specifications under `.docs` are admitted only by explicit task-packet mode. The repository root plus `.git`, `.forge`, and `.codex-bridge` cannot be targeted by first-class mutations.
 - Git-aware discovery uses the fixed token array `git ls-files -co --exclude-standard -z` with `shell: false`; repository content cannot change that command. Non-Git discovery does not follow directory symlinks.
 - Repository inspection is bounded to 50,000 indexed entries, 2 MiB per searched file, 200 regex GREP matches, 100 literal SEARCH matches, and 16,000 characters per read. Binary files are skipped by text search and rejected by text reads.
-- Static TypeScript/JavaScript relationship inspection considers at most 10,000 supported source files and 512 KiB per file, resolves only repository-indexed relative modules, and returns at most 50 entries per relationship section. It does not execute code, consult dependencies, or infer package/path aliases.
+- Static TypeScript/JavaScript relationship and symbol inspection considers at most 10,000 supported source files and 512 KiB per file. Relationship results resolve only repository-indexed relative modules and return at most 50 entries per section. Symbol results use a pinned TypeScript compiler syntax parser, return at most 100 exact declarations, and bind every location to the parsed source revision. Neither path executes repository code or consults installed dependencies.
 - Whole-file replacement of an existing file requires a successful complete read of the current revision within the read bound. Ranged, clipped, failed, stale, binary, and hidden-path reads do not authorize replacement.
 - Proposed mutations are bound to exact file or tree snapshots. A changed source, destination, or planned parent makes the approved proposal stale and it is refused.
 
@@ -78,7 +78,7 @@ The current TypeScript product does not yet provide:
 - container, VM, seccomp, AppArmor, or restricted-user isolation;
 - network denial for repository commands;
 - CPU, memory, process-count, or disk quotas beyond command timeout/output bounds;
-- language-server-accurate symbols, references, package exports, or TypeScript path-alias resolution;
+- semantic aliases, inferred types, overload identity, references/callers, package exports, or TypeScript path-alias resolution;
 - complete dependency-confusion analysis or a guarantee that heuristic patch scanning finds every secret;
 - a third-party plugin or MCP permission boundary;
 - interactive lifecycle hooks or a versioned third-party hook API.

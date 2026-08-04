@@ -21,8 +21,8 @@ The product is successful when a user can point Forge at a maintained multi-pack
 Goal: give small models enough deterministic repository understanding to make correct multi-file changes without flooding their context.
 
 1. Git-ignore-aware repository catalog and bounded deep navigation. **Shipped.**
-2. Relative module dependency graph with inbound dependents, outbound dependencies, package ownership, and related tests.
-3. Symbol and reference index for TypeScript/JavaScript, followed by Python and Go adapters.
+2. Relative module dependency graph with inbound dependents, outbound dependencies, package ownership, and related tests. **Shipped.**
+3. Revision-bound TypeScript/JavaScript declaration index. **Shipped.** Semantic references/callers, then Python and Go adapters, remain planned.
 4. Change-impact analysis that maps modified files to affected packages and candidate tests.
 5. Budgeted semantic context assembly using dependency, symbol, failure, and recent-change evidence.
 6. Read-only investigation workers that return evidence rather than mutations.
@@ -72,11 +72,11 @@ Exit: Forge can answer “what depends on this file, what does it depend on, and
 
 ### Milestone 2 — symbols and references
 
-- Add deterministic TypeScript/JavaScript declaration extraction.
-- Expose symbol lookup and references with exact source locations.
-- Bind results to repository revisions and context budgets.
+- Add deterministic TypeScript/JavaScript declaration extraction. **Shipped.**
+- Expose `SYMBOL <name>` with exact source locations, export status, and revision binding. **Shipped.**
+- Add semantic references/callers and combine them with dependency evidence. **Next.**
 
-Exit: Forge can locate definitions and callers even when filenames do not contain the task vocabulary.
+Partial exit reached: Forge can locate exact declarations even when filenames do not contain the task vocabulary. Full exit requires reference/caller lookup.
 
 ### Milestone 3 — change-aware verification
 
@@ -124,9 +124,9 @@ Exit: extensions cannot silently bypass repository containment or audit history.
 
 Each pass must inspect the latest repository state, preserve unrelated work, implement one coherent tested slice, run focused checks, run the full relevant gate, review the final diff, update current documentation, and commit. Do not push automatically.
 
-1. Dependency relationships and `RELATED`.
-2. TypeScript/JavaScript symbol declarations and exact locations.
-3. Reference lookup and dependency-backed context selection.
+1. Dependency relationships and `RELATED`. **Completed.**
+2. TypeScript/JavaScript symbol declarations and exact locations. **Completed.**
+3. Reference lookup and dependency-backed context selection. **Next.**
 4. Change-impact model and focused verification planning.
 5. Failure classification and one bounded retry strategy.
 6. Execution-backend interface around existing host/worktree behavior.

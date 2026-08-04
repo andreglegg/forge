@@ -29,8 +29,8 @@ The npm package is currently a **0.1 public alpha**. See [`docs/STATUS.md`](docs
 ## Status
 
 `forge` on PATH runs this. It indexes bounded Git-aware project trees, can
-navigate deep monorepos with scoped list/glob/search, ranged reads, and static
-TypeScript/JavaScript module relationships, supports read-only and plan modes,
+navigate deep monorepos with scoped list/glob/search, ranged reads, static
+TypeScript/JavaScript module relationships, and revision-bound symbol declarations, supports read-only and plan modes,
 and applies anchored edits plus transactional file and directory operations. It also runs approved commands, verifies completion, and
 asks before workspace effects unless explicitly automated. Driven end to end
 against local Qwen coder models.
@@ -310,6 +310,7 @@ GLOB **/*.test.ts
 GREP RequestHandler
 SEARCH exact literal text
 RELATED packages/api/src/server.ts
+SYMBOL RequestHandler
 READ packages/api/src/server.ts:120-220
 ```
 
@@ -317,18 +318,17 @@ READ packages/api/src/server.ts:120-220
 complete bounded index, including paths deeper than three levels and beyond 200
 files. `RELATED` reports the nearest package root, direct relative module
 dependencies, inbound dependents, and related tests for TypeScript/JavaScript
-files. `READ path:start-end` gives an exact line range, while an unrestricted
+files. `SYMBOL` uses a pinned TypeScript compiler parser to report exact declarations and named class/interface members with line, column, export status, and source revision. `READ path:start-end` gives an exact line range, while an unrestricted
 large read is clipped with a continuation instruction. Search skips binary files
 and files above 2 MiB; reads are bounded to 16,000 characters per action. A
 ranged, clipped, or failed read never authorizes a wholesale replacement of an
 existing file; large files must be changed with anchored edits. The index is
 capped at 50,000 entries.
 
-Relationship scans are bounded to 10,000 supported source files and 512 KiB per
+Relationship and symbol scans are bounded to 10,000 supported source files and 512 KiB per
 file. They resolve relative imports, export-from declarations, `require`,
 string-literal dynamic imports, common source extensions, TypeScript `.js`
-specifiers, and directory indexes. Package imports, path aliases, package
-exports, and language-server symbol semantics are not yet resolved.
+specifiers, and directory indexes. Symbol lookup is syntax-only: it does not yet resolve aliases, overload identity, inferred types, local variables, or semantic references. Package imports, path aliases, package exports, and language-server reference semantics remain planned.
 
 Generated dependency/build/cache directories, common credential files,
 `.docs`, and `.meta` are excluded from ordinary context. Exercise specifications

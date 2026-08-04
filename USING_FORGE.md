@@ -126,12 +126,13 @@ GLOB **/*.test.ts
 GREP RequestHandler
 SEARCH exact literal text
 RELATED packages/api/src/server.ts
+SYMBOL RequestHandler
 READ packages/api/src/server.ts:120-220
 ```
 
 `LIST` is one directory level. Glob and search operate over paths at any depth.
 `RELATED` reports a TypeScript/JavaScript file's nearest package root, direct
-relative dependencies, inbound dependents, and nearby tests. Ranged reads make
+relative dependencies, inbound dependents, and nearby tests. `SYMBOL` reports exact TypeScript/JavaScript declarations and named members with line/column ranges, export status, and a source revision. Ranged reads make
 large source files usable without flooding the model context. Ordinary context
 also follows one dependency hop through the same resolver. It excludes
 dependency/build/cache directories, common credential
@@ -141,12 +142,11 @@ files, `.docs`, and `.meta`; hidden exercise instructions remain opt-in through
 The current safety bounds are 50,000 indexed entries, 2 MiB per searched file,
 200 regex GREP matches, 100 literal SEARCH matches, and 16,000 characters per
 read action. Ranged, clipped, and failed reads do not authorize whole-file
-replacement; large files require anchored edits. Relationship scans consider at
+replacement; large files require anchored edits. Relationship and symbol scans consider at
 most 10,000 supported TypeScript/JavaScript files and 512 KiB per file. They
 resolve relative imports, export-from declarations, `require`, string-literal
 dynamic imports, common source extensions, TypeScript `.js` specifiers, and
-directory indexes. Package imports, path aliases, package exports, exact symbols,
-and language-server references remain planned.
+directory indexes. Symbol lookup uses a pinned TypeScript compiler syntax parser and is exact but not semantic: aliases, inferred types, overload identity, locals, package imports, path aliases, package exports, and language-server references remain planned.
 
 ## 4. What it is good at
 

@@ -28,7 +28,7 @@ Durable decisions are appended to a journal. Token deltas are presentation-only 
 
 `src/protocol.ts` defines one semantic tool registry. The text codec and native provider codec both decode into `ActionProposal` values. Actions are bounded before execution so a malformed model turn cannot schedule unbounded effects.
 
-Reads, listing, search, grep, static relationship inspection, anchored replacement, recursive deletion, directory creation, move/rename, copy, and command execution all operate inside one canonical `Workspace`. First-class mutations follow:
+Reads, listing, search, grep, static relationship and declaration inspection, anchored replacement, recursive deletion, directory creation, move/rename, copy, and command execution all operate inside one canonical `Workspace`. First-class mutations follow:
 
 ```text
 propose -> preview in memory -> approve -> revalidate revision -> commit
@@ -44,7 +44,9 @@ The workspace refuses implicit overwrite, repository-root or metadata mutation, 
 
 The same module powers one-level `LIST`, deep `GLOB`, regex `GREP`, literal `SEARCH`, and exact ranged `READ` operations. Search skips binary files and files above 2 MiB; reads return at most 16,000 characters with an explicit continuation range. All paths pass through canonical repository containment.
 
-`src/relationships.ts` builds a bounded static graph for relative TypeScript and JavaScript imports, export-from declarations, `require`, and string-literal dynamic imports. It resolves exact files, common source extensions, TypeScript `.js` specifiers, and directory indexes. `RELATED <path>` reports the nearest package manifest, direct dependencies, inbound dependents, and nearby tests. One graph scan considers at most 10,000 supported source files and 512 KiB per file. Package imports, TypeScript path aliases, package exports, and language-server semantics are deliberately not inferred.
+`src/relationships.ts` builds a bounded static graph for relative TypeScript and JavaScript imports, export-from declarations, `require`, and string-literal dynamic imports. It resolves exact files, common source extensions, TypeScript `.js` specifiers, and directory indexes. `RELATED <path>` reports the nearest package manifest, direct dependencies, inbound dependents, and nearby tests. One graph scan considers at most 10,000 supported source files and 512 KiB per file. Package imports, TypeScript path aliases, and package exports are deliberately not inferred.
+
+`src/symbols.ts` uses a separately pinned TypeScript 5.9 compiler API to parse TypeScript and JavaScript deterministically while Forge itself remains compiled with TypeScript 7. `SYMBOL <name>` reports exact top-level declarations and named class/interface/enum members with line/column ranges, export status, and the revision of the parsed source. The scan shares the 10,000-file/512-KiB bounds and repository visibility rules. This is syntax indexing, not semantic type analysis: aliases, inferred types, overload identity, locals, and references remain planned.
 
 `src/context.ts` compiles a bounded task-specific prompt and emits a receipt describing what was included or dropped. The current strategy combines a compact project map, lexical file scoring over the complete index, small-file inlining, one-hop dependency following through the same relationship resolver, repository instructions, and an optional exercise task packet. The old depth-three/200-file discovery ceiling no longer defines what the model can locate.
 
@@ -84,4 +86,4 @@ These are lifecycle commands, not a general plugin API. Interactive hooks, third
 
 ## Known architectural gaps
 
-The current TypeScript product does not yet provide language-server symbol/reference semantics, path-alias or package-export resolution, change-aware test selection, an OS-level sandbox, MCP, a general plugin API, remote workers, interactive lifecycle hooks, or a full-screen TUI. These are roadmap items and must not be inferred from historical documents.
+The current TypeScript product does not yet provide semantic references/callers, path-alias or package-export resolution, change-aware test selection, an OS-level sandbox, MCP, a general plugin API, remote workers, interactive lifecycle hooks, or a full-screen TUI. These are roadmap items and must not be inferred from historical documents.
