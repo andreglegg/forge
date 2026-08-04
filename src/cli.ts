@@ -61,6 +61,7 @@ import {
   type ProjectConfig,
   readProjectConfig,
   resolvePermissionMode,
+  selectModelProfile,
 } from "./product.js";
 import {
   type ActionProposal,
@@ -122,6 +123,7 @@ const USAGE = [
   "  forge doctor             validate project, provider, model, and verifier",
   "  forge init               create an idempotent forge.json",
   "  forge config             print resolved configuration",
+  "  forge profiles           list named model profiles",
   "  forge replay [path]      score the decoder on recorded turns — offline, free",
   "  forge sessions           what has been run here",
   "  forge show <id>          replay a recorded session",
@@ -138,6 +140,7 @@ const USAGE = [
   "      --discover           fast idea screen: 2/language, 1 try, 8 turns",
   "      --jobs <n>            run independent Polyglot cases concurrently",
   "",
+  "  --profile <name>         named model profile from forge.json",
   "  --model <name>           model id            (FORGE_MODEL)",
   "  --url <base>             OpenAI-compatible base url  (FORGE_URL)",
   "  --context <tokens>       declared context window, sizes the reply budget",
@@ -844,21 +847,42 @@ export async function main(argv: readonly string[], io: IO = consoleIO): Promise
     command === "undo" ||
     command === "init" ||
     command === "config" ||
+    command === "profiles" ||
     command === "doctor";
   const projectResult = readProjectConfig(root);
   for (const warning of projectResult.warnings) io.err(warning);
   for (const error of projectResult.errors) io.err(error);
   if (projectResult.errors.length > 0) return 2;
   const project = projectResult.config;
-  let config = providerFrom(options);
-  // Precedence: an explicit flag or environment variable beats the project
-  // file, which beats the default. The flag has to win, or `--url` could not
-  // override a config that someone checked in.
-  if (project.url && typeof options["url"] !== "string" && !process.env["FORGE_URL"]) {
-    config = { ...config, baseUrl: project.url };
+  let selectedProfile: ReturnType<typeof selectModelProfile>;
+  try {
+    selectedProfile = selectModelProfile(
+      project,
+      typeof options["profile"] === "string" ? options["profile"] : undefined,
+    );
+  } catch (error) {
+    io.err(error instanceof Error ? error.message : String(error));
+    return 2;
   }
-  if (project.model && typeof options["model"] !== "string" && !process.env["FORGE_MODEL"]) {
-    config = { ...config, model: project.model };
+  const profile = selectedProfile.profile;
+  let config = providerFrom(options);
+  // Precedence: explicit CLI/environment values beat the selected profile,
+  // which beats project-level compatibility keys, which beat defaults.
+  const explicitUrl = typeof options["url"] === "string" || Boolean(process.env["FORGE_URL"]);
+  const explicitModel = typeof options["model"] === "string" || Boolean(process.env["FORGE_MODEL"]);
+  if (!explicitUrl) config = { ...config, baseUrl: profile.url ?? project.url ?? config.baseUrl };
+  if (!explicitModel) config = { ...config, model: profile.model ?? project.model ?? config.model };
+  if (typeof options["context"] !== "string" && profile.contextWindow !== undefined) {
+    config = { ...config, contextWindow: profile.contextWindow };
+  }
+  if (typeof options["max-tokens"] !== "string" && profile.maxTokens !== undefined) {
+    config = { ...config, maxTokens: profile.maxTokens };
+  }
+  if (typeof options["temperature"] !== "string" && profile.temperature !== undefined) {
+    config = { ...config, temperature: profile.temperature };
+  }
+  if (typeof options["max-turns"] !== "string" && profile.maxTurns !== undefined) {
+    options["max-turns"] = String(profile.maxTurns);
   }
 
   if (command === "init") {
@@ -887,18 +911,40 @@ export async function main(argv: readonly string[], io: IO = consoleIO): Promise
     }
   }
 
+  if (command === "profiles") {
+    const profiles = Object.entries(project.profiles ?? {})
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([name, value]) => ({ name, selected: name === selectedProfile.name, ...value }));
+    const result = { selected: selectedProfile.name, profiles };
+    if (options["json"] === true) io.out(JSON.stringify(result, null, 2));
+    else if (profiles.length === 0) io.out("No model profiles defined in forge.json.");
+    else {
+      for (const item of profiles) {
+        io.out(
+          `${item.selected ? "*" : " "} ${item.name} · ${item.model ?? "auto-model"} · ${item.url ?? "default endpoint"}${item.contextWindow === undefined ? "" : ` · ${item.contextWindow} ctx`}`,
+        );
+      }
+    }
+    return 0;
+  }
+
   if (command === "config") {
     const result = {
       version: FORGE_VERSION,
       repository: root,
       source: projectResult.source,
       mode,
+      profile: selectedProfile.name,
       provider: {
         url: config.baseUrl,
         model: config.model || null,
         contextWindow: config.contextWindow,
         maxTokens: config.maxTokens,
         temperature: config.temperature,
+        native:
+          options["native"] === true ||
+          (options["native"] === undefined && profile.native === true),
+        maxTurns: positiveIntegerOption(options["max-turns"], 12),
       },
       verify: project.verify ?? detectCommands(root),
     };
@@ -908,6 +954,7 @@ export async function main(argv: readonly string[], io: IO = consoleIO): Promise
       io.out(`repository: ${result.repository}`);
       io.out(`config: ${result.source ?? "detected defaults"}`);
       io.out(`mode: ${result.mode}`);
+      io.out(`profile: ${result.profile ?? "none"}`);
       io.out(`provider: ${result.provider.url}`);
       io.out(`model: ${result.provider.model ?? "auto-discover"}`);
       io.out(
@@ -929,6 +976,7 @@ export async function main(argv: readonly string[], io: IO = consoleIO): Promise
       repository: root,
       config: projectResult.source,
       mode,
+      profile: selectedProfile.name,
       verify: verification,
       provider,
     };
@@ -968,7 +1016,8 @@ export async function main(argv: readonly string[], io: IO = consoleIO): Promise
   // package's measured evidence is all on that path. `--native` opts into the
   // provider's own tool-calling for endpoints that constrain generation to the
   // schema. Neither is claimed to be better in general.
-  const native = options["native"] === true;
+  const native =
+    options["native"] === true || (options["native"] === undefined && profile.native === true);
   const controller = new AbortController();
   process.once("SIGINT", () => controller.abort());
 

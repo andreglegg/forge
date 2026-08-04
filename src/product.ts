@@ -5,15 +5,53 @@ import { detectCommands } from "./verify.js";
 
 export type PermissionMode = "workspace" | "read-only" | "plan";
 
+const ModelProfileSchema = z
+  .object({
+    url: z.string().url().optional(),
+    model: z.string().min(1).optional(),
+    contextWindow: z.number().int().positive().optional(),
+    maxTokens: z.number().int().positive().optional(),
+    temperature: z.number().min(0).max(2).optional(),
+    native: z.boolean().optional(),
+    maxTurns: z.number().int().positive().max(100).optional(),
+  })
+  .strict();
+
 const ProjectConfigSchema = z
   .object({
     url: z.string().url().optional(),
     model: z.string().min(1).optional(),
     verify: z.array(z.array(z.string()).min(1)).optional(),
+    profile: z.string().min(1).optional(),
+    profiles: z.record(z.string().min(1), ModelProfileSchema).optional(),
   })
   .strict();
 
+export type ModelProfile = z.infer<typeof ModelProfileSchema>;
 export type ProjectConfig = z.infer<typeof ProjectConfigSchema>;
+
+export interface SelectedModelProfile {
+  readonly name: string | null;
+  readonly profile: ModelProfile;
+}
+
+export function selectModelProfile(
+  config: ProjectConfig,
+  requested?: string,
+): SelectedModelProfile {
+  const name = requested ?? config.profile ?? null;
+  if (name === null) return { name: null, profile: {} };
+  const profile = config.profiles?.[name];
+  if (profile === undefined) {
+    const available = Object.keys(config.profiles ?? {}).sort();
+    throw new Error(
+      available.length === 0
+        ? `unknown model profile: ${name}; forge.json defines no profiles`
+        : `unknown model profile: ${name}; available: ${available.join(", ")}`,
+    );
+  }
+  return { name, profile };
+}
 
 export interface ProjectConfigResult {
   readonly config: ProjectConfig;

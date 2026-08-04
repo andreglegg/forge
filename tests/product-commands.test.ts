@@ -9,6 +9,7 @@ import {
   modeRefusal,
   readProjectConfig,
   resolvePermissionMode,
+  selectModelProfile,
 } from "../src/product.js";
 
 function capturedIO(): { readonly io: IO; readonly out: string[]; readonly err: string[] } {
@@ -74,6 +75,156 @@ describe("project configuration", () => {
         provider: { url: "http://127.0.0.1:8790/v1", model: null },
       });
       expect([...initialized.err, ...configured.err]).toEqual([]);
+    });
+  });
+
+  test("resolves and lists strict named model profiles", async () => {
+    await withRepo(async (root) => {
+      writeFileSync(
+        path.join(root, "forge.json"),
+        JSON.stringify({
+          profile: "local",
+          profiles: {
+            fast: { model: "fast-model", maxTurns: 6 },
+            local: {
+              url: "http://127.0.0.1:44100/v1",
+              model: "local-model",
+              contextWindow: 65_536,
+              maxTokens: 4_096,
+              temperature: 0.2,
+              native: true,
+              maxTurns: 10,
+            },
+          },
+        }),
+      );
+
+      const project = readProjectConfig(root);
+      const selected = selectModelProfile(project.config);
+      const listed = capturedIO();
+      const listCode = await main(["profiles", "--repo", root, "--json"], listed.io);
+      const configured = capturedIO();
+      const configCode = await main(["config", "--repo", root, "--json"], configured.io);
+
+      expect(project.errors).toEqual([]);
+      expect(selected).toMatchObject({
+        name: "local",
+        profile: {
+          model: "local-model",
+          contextWindow: 65_536,
+          maxTokens: 4_096,
+          native: true,
+          maxTurns: 10,
+        },
+      });
+      expect(listCode).toBe(0);
+      expect(JSON.parse(listed.out.join("\n"))).toMatchObject({
+        selected: "local",
+        profiles: [
+          { name: "fast", selected: false, model: "fast-model" },
+          { name: "local", selected: true, model: "local-model" },
+        ],
+      });
+      expect(configCode).toBe(0);
+      expect(JSON.parse(configured.out.join("\n"))).toMatchObject({
+        profile: "local",
+        provider: {
+          url: "http://127.0.0.1:44100/v1",
+          model: "local-model",
+          contextWindow: 65_536,
+          maxTokens: 4_096,
+          temperature: 0.2,
+          native: true,
+          maxTurns: 10,
+        },
+      });
+      expect([...listed.err, ...configured.err]).toEqual([]);
+    });
+  });
+
+  test("lets explicit CLI values override a selected profile", async () => {
+    await withRepo(async (root) => {
+      writeFileSync(
+        path.join(root, "forge.json"),
+        JSON.stringify({
+          profiles: {
+            local: {
+              url: "http://profile.invalid/v1",
+              model: "profile-model",
+              contextWindow: 16_000,
+              maxTokens: 2_000,
+              temperature: 0.2,
+              native: true,
+              maxTurns: 8,
+            },
+          },
+        }),
+      );
+      const configured = capturedIO();
+
+      const code = await main(
+        [
+          "config",
+          "--repo",
+          root,
+          "--profile",
+          "local",
+          "--url",
+          "http://override.invalid/v1",
+          "--model",
+          "override-model",
+          "--context",
+          "32000",
+          "--max-tokens",
+          "3000",
+          "--temperature",
+          "0.7",
+          "--max-turns",
+          "14",
+          "--json",
+        ],
+        configured.io,
+      );
+      const result = JSON.parse(configured.out.join("\n"));
+
+      expect(code).toBe(0);
+      expect(result).toMatchObject({
+        profile: "local",
+        provider: {
+          url: "http://override.invalid/v1",
+          model: "override-model",
+          contextWindow: 32_000,
+          maxTokens: 3_000,
+          temperature: 0.7,
+          native: true,
+          maxTurns: 14,
+        },
+      });
+    });
+  });
+
+  test("rejects unknown and malformed profiles", async () => {
+    await withRepo(async (root) => {
+      writeFileSync(
+        path.join(root, "forge.json"),
+        JSON.stringify({ profiles: { local: { contextWindow: -1 } } }),
+      );
+      expect(readProjectConfig(root).errors.join("\n")).toMatch(/contextWindow|greater than 0/i);
+
+      writeFileSync(
+        path.join(root, "forge.json"),
+        JSON.stringify({ profiles: { local: { model: "one" }, remote: { model: "two" } } }),
+      );
+      expect(() => selectModelProfile(readProjectConfig(root).config, "missing")).toThrow(
+        /available: local, remote/i,
+      );
+      const captured = capturedIO();
+      const code = await main(
+        ["config", "--repo", root, "--profile", "missing", "--json"],
+        captured.io,
+      );
+      expect(code).toBe(2);
+      expect(captured.err.join("\n")).toMatch(/unknown model profile/i);
     });
   });
 

@@ -98,6 +98,7 @@ forge run "<question>" --read-only
 forge doctor              provider/model/verifier diagnostics
 forge init                create an idempotent forge.json
 forge config --json       resolved configuration
+forge profiles            list named local-model profiles
 forge continue [id]       reopen interactive chat with retained history
 forge replay              score the decoder on everything recorded here
 forge sessions            what has been run here
@@ -110,6 +111,7 @@ forge compare <a> <b>     paired comparison of two Polyglot report files
 forge compare-little-coder <forge-report> <little-coder-report> <case-manifest>
                           normalize and compare a Little Coder paired run
 
+  --profile <name>        select a named profile from forge.json
   --native                use the provider's tool-calling instead of the text
                           protocol (OpenAI and Anthropic wires, auto-detected)
   --task-packet           include bounded student-facing exercise docs
@@ -124,6 +126,30 @@ It defaults to `http://127.0.0.1:8790/v1` and asks the endpoint what it serves
 via `/v1/models`. Coding commands also perform a minimal completion preflight,
 so a gateway that advertises an inactive model profile fails before the agent
 starts. Override with `--url` / `FORGE_URL` and `--model` / `FORGE_MODEL`.
+
+Named profiles keep local-model-specific settings together:
+
+```json
+{
+  "profile": "local-30b",
+  "profiles": {
+    "local-30b": {
+      "url": "http://127.0.0.1:44100/v1",
+      "model": "qwen3-coder-30b-a3b-instruct-q4_k_m",
+      "contextWindow": 65536,
+      "maxTokens": 4096,
+      "temperature": 0.1,
+      "native": false,
+      "maxTurns": 12
+    }
+  },
+  "verify": [["npm", "test"]]
+}
+```
+
+Use `forge profiles`, `forge config --json`, or override for one run with
+`--profile <name>`. Explicit CLI flags and `FORGE_URL` / `FORGE_MODEL` take
+precedence over a profile.
 
 `--isolate` is the safest headless repository mode currently shipped. It requires
 the selected path to be the Git root and completely clean, including untracked

@@ -16,15 +16,37 @@ export FORGE_MODEL=qwen3-coder-30b-a3b-instruct-q4_k_m
 forge doctor                                    # models, active runtime, verifier
 ```
 
-Per-project, commit a `forge.json` at the repo root instead:
+Per-project, commit a `forge.json` at the repo root. Named profiles let one
+project switch between local models without repeating fragile flags:
 
 ```json
 {
-  "url": "http://127.0.0.1:8790/v1",
-  "model": "qwen3-coder-30b-a3b-instruct-q4_k_m",
+  "profile": "local-30b",
+  "profiles": {
+    "local-30b": {
+      "url": "http://127.0.0.1:44100/v1",
+      "model": "qwen3-coder-30b-a3b-instruct-q4_k_m",
+      "contextWindow": 65536,
+      "maxTokens": 4096,
+      "temperature": 0.1,
+      "native": false,
+      "maxTurns": 12
+    },
+    "quick-9b": {
+      "url": "http://127.0.0.1:44100/v1",
+      "model": "qwen3.5-9b-q4_k_m",
+      "contextWindow": 32768,
+      "maxTurns": 8
+    }
+  },
   "verify": [["npm", "test"]]
 }
 ```
+
+Use `forge profiles` to list them and `--profile quick-9b` for a one-run
+override. Explicit CLI flags and `FORGE_URL` / `FORGE_MODEL` win over profiles.
+Legacy top-level `url` and `model` keys remain supported below profiles in the
+precedence order.
 
 `verify` is worth setting explicitly. Forge auto-detects a test command, but
 naming it removes the guess — and the verifier is what stops a confident wrong
@@ -51,7 +73,8 @@ forge run "<question>" --read-only
 forge continue [id]            # reopen interactive chat with retained history
 forge doctor                   # provider/model/verifier health
 forge init                     # create forge.json from detected checks
-forge config --json            # resolved project and provider settings
+forge config --json            # resolved project/profile/provider settings
+forge profiles                 # list named local-model profiles
 forge sessions                 # what has been run here
 forge show <id>                # replay a recorded session
 forge undo [id]                # put back what a session changed

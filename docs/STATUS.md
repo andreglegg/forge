@@ -18,6 +18,7 @@ This table describes the executable TypeScript product in `src/`.
 | Benchmark and Polyglot adapters | Shipped | Reproducible identities, resume, comparisons, infrastructure classification. |
 | npm package | Alpha | Package metadata and cross-platform release CI exist; publication is still manual. |
 | Doctor/init/config commands | Shipped | Strict `forge.json` validation, idempotent initialization, resolved config output, verifier detection, and live provider/model diagnostics. |
+| Named model profiles | Shipped | Project profiles carry endpoint, model, context/output budgets, temperature, native protocol, and turn budget; explicit CLI/environment values override them. |
 | Read-only/plan permission modes | Shipped | Enforced by the Run actor before preview, approval, or execution; `--yes` cannot bypass them. |
 | Stream-JSON event protocol | Shipped | `--stream-json` emits durable Run events as JSONL followed by one result record. |
 | Disposable Git worktrees | Shipped (opt-in) | `forge run --isolate` requires a clean Git root, executes in a detached temporary worktree, retains a binary patch, and transfers session evidence. `--promote` applies only a verified, conflict-checked patch. |

@@ -11,7 +11,8 @@ All notable product changes are recorded here. Forge follows semantic versioning
 - Cross-platform Node CI for Linux, macOS, and Windows.
 - Package dry-run validation in CI.
 - Current TypeScript architecture, security, and feature-status documentation.
-- `forge doctor`, `forge init`, and `forge config` product commands.
+- `forge doctor`, `forge init`, `forge config`, and `forge profiles` product commands.
+- Strict named model profiles for endpoint, model, context/output budgets, temperature, protocol, and turn budget.
 - Provider/model completion preflight before coding sessions.
 - Capability-enforced `workspace`, `read-only`, and `plan` modes.
 - `forge continue` / `forge resume` top-level session continuation.
