@@ -9,7 +9,7 @@ engineering state.
 |------|--------|----------|
 | Aider Polyglot, 225 cases | **135/225 = 60.00%**, +14.44 pp over Little Coder's published 45.56%, one-sided exact binomial `p=9.5e-06`, 95% lower bound 54.33% | `bench/POLYGLOT_FULL225.md` |
 | Paired vs Little Coder, pinned 42 | **28/42** and **27/42** vs **19/42** (`p=0.012`, `p=0.008`) | same |
-| Local multi-file suite | **14/14**, 0 false successes, 0 damaged | `bench/PROJECT_TRIAL.md` |
+| Local suite (15 tasks, 3 trials) | **14/15** every trial, 0 false successes | `bench/DECOMPOSE_INSTRUCTION.md` |
 | Greenfield build | works, then over-reports | same |
 | Model scaling | 7B 4.8% / 14B 11.9-14.3% / 30B-MoE 64-67% | `bench/MODEL_SCALING.md` |
 | Tests | 197 pass, 1 skip | `npm run check` |
@@ -23,8 +23,15 @@ score-gap arguments made earlier from 42-case runs. Prefer the mechanism
 (turn counts, flip asymmetry, failure classes) over the score gap, or use the
 full 225.
 
-Two interventions have been measured and **rejected**, both of which sounded
-obviously right beforehand:
+**Guidance dilutes; mechanism holds.** Three plausible additions to the model's
+context have been measured and all three lost (`bench/DECOMPOSE_INSTRUCTION.md`
+has the table). Every improvement that held was a mechanism instead: the
+verification gate, confirming a pass before believing it, the stall breaker,
+allowing a read-then-replace. Treat any "just tell the model to..." idea as
+needing evidence before it ships.
+
+Interventions measured and **rejected**, all of which sounded obviously right
+beforehand:
 
 - **`--task-packet`** (feed the model the exercise spec): 22/42 vs 28/27. The
   diagnosis was correct — 0 of 59 attempts ever opened `.docs/instructions.md`,
@@ -33,6 +40,10 @@ obviously right beforehand:
   Do **not** re-add spec discovery to `src/instructions.ts`; that was tried and
   reverted (duplicates `taskPacketItems`, breaks `tests/cli-context.test.ts:49`).
 - **18 turns instead of 12**: 24/42 vs 28/27. Mildly negative. Keep 12.
+- **"work one file at a time"** as an always-on instruction: 13.67/15 vs 14.0
+  and a false success the control never had. It did change behaviour (turns 254
+  -> 221) — it just made outcomes worse, most plausibly by stopping short.
+  `bench/DECOMPOSE_INSTRUCTION.md`.
 
 Both in `bench/TASK_PACKET.md`.
 
