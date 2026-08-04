@@ -2,72 +2,63 @@
 
 ## Threat model
 
-Repository content, user tasks, generated model text, tool output, and dependency scripts can all be adversarial. Forge therefore treats model output as untrusted input.
+Repository files, user instructions, generated model output, tool output, dependency scripts, and provider responses are all untrusted. Forge is designed to reduce accidental or model-driven damage inside one repository; it is not currently an operating-system sandbox.
 
 ## Enforced controls
 
-Paths:
+### Paths
 
-- File access is rooted at one canonical repository directory.
-- Traversal through `..`, symlinks, and absolute paths is rejected when it escapes the root.
-- Denied glob patterns protect secrets and repository internals.
-- Glob matching folds case when the underlying volume does. This is probed
-  from the filesystem, not inferred from the operating system: `fnmatch` uses
-  `os.path.normcase`, which is the identity function on macOS even though
-  APFS is case-insensitive, so `.GIT/config` and `.git/config` compared as
-  different strings while naming the same inode.
-- `.git` and `.forge` are refused structurally, independent of configuration.
-  These are the harness' trust anchors — git executes hooks and configured
-  commands during the `git status` the harness itself runs, and `.forge` holds
-  the promoted `active-policy.json` — so neither may depend on a user-supplied
-  deny list being spelled correctly.
-- The deny list applies to discovery as well as reading: `list_files`,
-  `search_text`, and the retrieval index all filter through it. A policy that
-  blocks `read_file .env` while `search_text` prints its contents is not a
-  policy.
-- Policy fails closed: a configuration with no `policy:` section still denies
-  a default set of secret paths.
+- Every file operation is rooted at one canonical repository directory.
+- Absolute paths, traversal, and symlink resolutions that escape the root are rejected.
+- `.git`, `.forge`, common secret files, generated directories, and configured deny patterns are excluded from discovery and reading.
+- Proposed edits are bound to the revision that was previewed. A changed file makes the approved proposal stale and it is refused.
 
-Commands:
+### Mutations
 
-- Commands are arrays, not shell strings, and run with `shell=False`.
-- Command prefixes must match an allowlist, and the authorization decision is
-  made over exactly the token array that will execute.
-- Individual arguments that escape the sandbox regardless of prefix are denied
-  (`--no-index`, `--exec`, `--output`, `--upload-pack`, `--receive-pack`).
-- Commands run in their own process group; a timeout kills the whole tree.
-  Killing only the direct child left a forked grandchild holding the output
-  pipe, which made the timeout unenforceable.
-- The environment is reduced to a fixed allowlist. Provider credentials are
-  never passed to repository commands or to evaluation verifiers.
-- Time and output are bounded.
-- File writes can be globally disabled.
-- Changed-file count is checked before completion.
+- The model proposes an anchored replacement; Forge previews the exact result before approval.
+- Approval is scoped by action class. Approving an edit does not approve command execution.
+- Mutation events record before/after revisions and retained content for guarded undo.
+- A final claim in a turn whose mutations failed is rejected.
 
-Model output:
+### Commands
 
-- Treated as untrusted input throughout; every schema rejects unknown fields.
-- Reasoning blocks (`<think>…</think>`) are stripped at the transport boundary
-  and never persisted, per the no-hidden-chain-of-thought rule.
+- Commands are token arrays and use `spawn` with `shell: false`.
+- A narrowly supported `cd <repository-directory> && <one command>` form changes only the validated working directory; additional shell chains, redirects, pipes, and escapes are rejected.
+- Commands run with a reduced environment that excludes provider credentials.
+- Duration, output, and process lifetime are bounded; timeouts terminate the process group.
+- In attended mode, command execution requires a separate approval. Headless execution requires the explicit `--yes` option.
+
+### Model output and persistence
+
+- Tool arguments are schema-validated and action counts are bounded per turn.
+- Partial edit directives are never executed.
+- Hidden reasoning blocks are not required or exposed; traces store observable model text, decoded actions, repairs, and results.
+- Sessions and traces are repository-local under ignored `.forge` state.
+
+### Verification
+
+- The model's success claim is not authoritative.
+- Configured or detected project checks run independently after completion.
+- A passing verification is repeated once to detect an unstable pass.
+- Provider and toolchain infrastructure failures are separated from coding failures in benchmark reports.
 
 ## Deliberate limitations
 
-An allowlisted build tool can still execute repository-defined scripts. For example, `npm test`, `cargo test`, or `pytest` may run arbitrary code from the repository — a model that writes `conftest.py` and then runs an allowlisted `pytest` has achieved code execution by design, not by bypass. The argument denylist and environment scrub reduce the blast radius; they do not close this. Use containers, virtual machines, restricted users, or disposable worktrees for untrusted repositories.
+An approved build or test command can execute arbitrary repository-controlled code. `npm test`, `pytest`, `cargo test`, Gradle, and similar tools may run scripts written by the repository or by the model. Environment scrubbing and repository containment reduce the blast radius but do not provide process isolation.
 
-The MVP does not provide an OS-level sandbox. Do not run it with elevated privileges.
+The current TypeScript product does not yet provide:
 
-Edits are not transactional. A run that fails verification leaves its partial
-changes in the working tree; worktree isolation and rollback remain roadmap
-items, so run against a clean, committed tree you are willing to lose.
+- container, VM, seccomp, AppArmor, or restricted-user isolation;
+- network denial for repository commands;
+- CPU, memory, process-count, or disk quotas beyond command timeout/output bounds;
+- automatic disposable Git-worktree execution and verified promotion;
+- dependency-confusion or secret scanning;
+- a third-party plugin or MCP permission boundary.
 
-## Recommended production hardening
+Do not run Forge with elevated privileges or use autonomous approval on an untrusted repository. Use a clean branch or disposable clone and review the final diff.
 
-- execute each run in an ephemeral container or microVM;
-- mount the repository read-write and everything else read-only;
-- disable network by default;
-- use seccomp/AppArmor on Linux;
-- cap CPU, memory, processes, and disk;
-- maintain language-specific command profiles;
-- scan patches for secrets and dependency confusion;
-- sign evaluation and promotion records;
-- separate the evaluation controller from the candidate agent environment.
+## Production-hardening direction
+
+The planned execution-backend interface will add disposable Git worktrees first, followed by optional container backends with network-off defaults and resource limits. External tools, MCP servers, hooks, and plugins must pass through the same permission, timeout, output-bound, and audit-journal boundaries as built-in tools.
+
+Security reports should include a reproducible case and affected version. Do not include real credentials or private repository content.

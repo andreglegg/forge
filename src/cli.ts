@@ -74,6 +74,7 @@ import {
 import { newSessionId, SessionStore } from "./session.js";
 import { summarize, TurnMeter, type TurnUsage } from "./usage.js";
 import { detectCommands, formatForModel, verify } from "./verify.js";
+import { FORGE_VERSION } from "./version.js";
 import { resolveInside, revisionOf, Workspace } from "./workspace.js";
 
 export interface IO {
@@ -119,6 +120,7 @@ const USAGE = [
   "  --no-verify              skip the verification gate on completion",
   "  --native                 use the provider's tool-calling instead of the text protocol",
   "  --json                   machine-readable output",
+  "  --version                print the installed Forge version",
 ].join("\n");
 
 /**
@@ -748,6 +750,10 @@ async function oneTurn(
 
 export async function main(argv: readonly string[], io: IO = consoleIO): Promise<number> {
   const { command, rest, options } = parseArgs(argv);
+  if (options["version"] === true || command === "version") {
+    io.out(FORGE_VERSION);
+    return 0;
+  }
   if (options["help"] === true || command === "help") {
     io.out(USAGE);
     return 0;

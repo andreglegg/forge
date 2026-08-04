@@ -6,6 +6,26 @@ Python orchestration harness and a first TypeScript pass — are archived under
 
 **New here? Read [`USING_FORGE.md`](USING_FORGE.md).**
 
+## Install
+
+Forge requires Node.js 22.12 or newer. From a published package:
+
+```sh
+npm install --global forge-agent
+forge --version
+forge doctor
+```
+
+From this repository:
+
+```sh
+npm ci
+npm run build
+node bin/forge --version
+```
+
+The npm package is currently a **0.1 public alpha**. See [`docs/STATUS.md`](docs/STATUS.md) for the exact shipped/planned boundary and [`docs/SECURITY.md`](docs/SECURITY.md) before using autonomous approval on valuable code.
+
 ## Status
 
 `forge` on PATH runs this. It plans nothing, reads, edits by anchored
@@ -72,6 +92,7 @@ forge replay              score the decoder on everything recorded here
 forge sessions            what has been run here
 forge show <id>           replay a recorded session
 forge undo [id]           put back what a session changed
+forge --version            print the installed version
 forge polyglot <dataset> --name <run>
                           run/resume Aider's 225-case Polyglot benchmark
 forge compare <a> <b>     paired comparison of two Polyglot report files
