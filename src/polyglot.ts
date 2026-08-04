@@ -826,7 +826,7 @@ export function classifyPolyglotFailure(
 }
 
 export function isPolyglotInfrastructureFailure(output: string): boolean {
-  return /connection refused|fetch failed|econnrefused|could not resolve host|temporary failure in name resolution|network is unreachable|failed to download|could not create parent directory for lock file|could not find tools\.jar|valid jdk installation|no space left on device|bad option:\s*-m|no module named pytest/i.test(
+  return /http\s+(?:4\d\d|5\d\d)\s+from\s+https?:\/\/|profile_conflict|connection refused|fetch failed|econnrefused|could not resolve host|temporary failure in name resolution|network is unreachable|failed to download|could not create parent directory for lock file|could not find tools\.jar|valid jdk installation|no space left on device|bad option:\s*-m|no module named pytest/i.test(
     output,
   );
 }

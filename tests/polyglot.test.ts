@@ -397,6 +397,38 @@ describe("Polyglot execution", () => {
       expect(result.attempts).toHaveLength(1);
     });
   });
+
+  test("does not spend a retry when the model endpoint rejects the runtime profile", async () => {
+    await withDataset(async (dataset, output) => {
+      let agentCalls = 0;
+      const report = await runPolyglot(options(dataset, output), {
+        runAttempt: async (_prompt, _repository, number, turnsBudget) => {
+          agentCalls += 1;
+          return {
+            ...attempt(number, turnsBudget),
+            exitCode: 1,
+            claimedSuccess: false,
+            turns: 0,
+            actions: 0,
+            output:
+              'HTTP 409 from http://127.0.0.1:44100/v1: {"error":{"code":"profile_conflict"}}',
+          };
+        },
+        verify: async () => ({ passed: false, output: "assertion failed", timedOut: false }),
+      });
+
+      const result = JSON.parse(
+        readFileSync(path.join(output, "cases", "python", "python-case", "result.json"), "utf8"),
+      ) as { infrastructureError: boolean; failureClass: string; attempts: unknown[] };
+
+      expect(agentCalls).toBe(1);
+      expect(report.infrastructureErrorCount).toBe(1);
+      expect(report.results).toHaveLength(0);
+      expect(result.infrastructureError).toBe(true);
+      expect(result.failureClass).toBe("infrastructure");
+      expect(result.attempts).toHaveLength(1);
+    });
+  });
 });
 
 describe("Polyglot failure classification", () => {
@@ -458,7 +490,7 @@ describe("Polyglot failure classification", () => {
     ).toBe("no_progress");
   });
 
-  test("recognizes toolchain provisioning failures", () => {
+  test("recognizes toolchain and provider provisioning failures", () => {
     expect(
       isPolyglotInfrastructureFailure(
         "Could not create parent directory for lock file /broken/gradle.zip.lck",
@@ -467,6 +499,12 @@ describe("Polyglot failure classification", () => {
     expect(
       isPolyglotInfrastructureFailure("Could not find tools.jar in a valid JDK installation"),
     ).toBe(true);
+    expect(
+      isPolyglotInfrastructureFailure(
+        'HTTP 409 from http://127.0.0.1:44100/v1: {"error":{"code":"profile_conflict"}}',
+      ),
+    ).toBe(true);
+    expect(isPolyglotInfrastructureFailure("expected HTTP 409 but got HTTP 500")).toBe(false);
     expect(isPolyglotInfrastructureFailure("expected 2 but got 3")).toBe(false);
   });
 });
