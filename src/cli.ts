@@ -46,12 +46,28 @@ import { projectInstructionItems } from "./instructions.js";
 import { streamNative } from "./native.js";
 import { load as loadObject, store as storeObject } from "./objects.js";
 import { runPolyglot } from "./polyglot.js";
-import { boundTurnIntent, renderTurn, type TurnIntent, textProtocolPrompt } from "./protocol.js";
+import {
+  initializeProject,
+  modeRefusal,
+  type PermissionMode,
+  type ProjectConfig,
+  readProjectConfig,
+  resolvePermissionMode,
+} from "./product.js";
+import {
+  type ActionProposal,
+  boundTurnIntent,
+  mutates,
+  renderTurn,
+  type TurnIntent,
+  textProtocolPrompt,
+} from "./protocol.js";
 import {
   DEFAULT_PROVIDER,
   discoverModel,
   type Message,
   type ProviderConfig,
+  probeProvider,
   streamCompletion,
 } from "./provider.js";
 import { banner, renderHeadless, renderInteractive, useColor, useTruecolor } from "./render.js";
@@ -92,6 +108,12 @@ const USAGE = [
   "",
   "  forge                    interactive chat in the current directory",
   "  forge run <task>         one shot, exits 0 on success",
+  "  forge plan <task>        inspect and produce a plan without effects",
+  "  forge continue [id]      reopen interactive chat with retained history",
+  "  forge resume [id]        alias for continue",
+  "  forge doctor             validate project, provider, model, and verifier",
+  "  forge init               create an idempotent forge.json",
+  "  forge config             print resolved configuration",
   "  forge replay [path]      score the decoder on recorded turns — offline, free",
   "  forge sessions           what has been run here",
   "  forge show <id>          replay a recorded session",
@@ -117,44 +139,15 @@ const USAGE = [
   "  --task-packet            include bounded exercise docs in initial context",
   "  --batch-actions          invite bounded independent actions in one reply",
   "  --yes                    approve every action (headless, CI)",
+  "  --mode <mode>            workspace, read-only, or plan",
+  "  --read-only              deny edits and command execution",
+  "  --plan                   plan mode alias",
   "  --no-verify              skip the verification gate on completion",
   "  --native                 use the provider's tool-calling instead of the text protocol",
-  "  --json                   machine-readable output",
+  "  --json                   one final machine-readable document",
+  "  --stream-json            JSONL durable events plus one final result",
   "  --version                print the installed Forge version",
 ].join("\n");
-
-/**
- * Project configuration, and a loud complaint about the file people expect.
- *
- * `forge.json` is read for `url`, `model` and `verify`. `forge.yaml` is *not*
- * -- reading YAML would mean a parser dependency for four keys -- but a user
- * who writes one is not wrong to expect it to work, and silently ignoring it
- * is the worst outcome available: their settings appear to be in effect and
- * are not. Observed: the first person handed this CLI wrote a `forge.yaml` in
- * every project before doing anything else.
- */
-interface ProjectConfig {
-  readonly url?: string;
-  readonly model?: string;
-  readonly verify?: string[][];
-}
-
-function projectConfig(root: string, io: IO): ProjectConfig {
-  if (existsSync(path.join(root, "forge.yaml")) || existsSync(path.join(root, "forge.yml"))) {
-    io.err('forge.yaml is not read. Use forge.json: { "url", "model", "verify" }.');
-  }
-  const file = path.join(root, "forge.json");
-  if (!existsSync(file)) return {};
-  try {
-    const parsed = JSON.parse(readFileSync(file, "utf8")) as ProjectConfig;
-    return parsed;
-  } catch (error) {
-    // Named, not swallowed. A configuration file that fails to parse is a
-    // question the user asked and got no answer to.
-    io.err(`forge.json could not be read: ${error instanceof Error ? error.message : "invalid"}`);
-    return {};
-  }
-}
 
 function providerFrom(options: Record<string, string | boolean>): ProviderConfig {
   const integer = (key: string, fallback: number): number => {
@@ -290,7 +283,11 @@ function listing(root: string, limit = 200): string {
  * endpoint keeps; and it was the *same* listing whatever the task was, so the
  * one part of the prompt that should respond to what was asked never did.
  */
-export function systemPrompt(native = false, batchActions = false): string {
+export function systemPrompt(
+  native = false,
+  batchActions = false,
+  mode: PermissionMode = "workspace",
+): string {
   return [
     "You are a careful coding agent working inside a single repository.",
     "",
@@ -321,6 +318,17 @@ export function systemPrompt(native = false, batchActions = false): string {
     "  exports, files or configuration that were not asked for.",
     "- If the request is ambiguous, make the narrowest reasonable change and say",
     "  in your DONE line what you assumed, rather than doing several things.",
+    ...(mode === "plan"
+      ? [
+          "- PLAN MODE: do not edit files or run commands. Inspect with reads and searches only.",
+          "- Finish with a concrete ordered implementation plan naming files, tests, risks, and assumptions.",
+        ]
+      : mode === "read-only"
+        ? [
+            "- READ-ONLY MODE: do not edit files or run commands.",
+            "- Answer from repository inspection and state uncertainty explicitly.",
+          ]
+        : []),
   ].join("\n");
 }
 
@@ -647,6 +655,37 @@ function makeTools(workspace: Workspace, signal?: AbortSignal) {
   };
 }
 
+function makeRunEffects(workspace: Workspace, signal: AbortSignal, mode: PermissionMode) {
+  const tools = makeTools(workspace, signal);
+  if (mode === "workspace") return { workspace, ...tools };
+  const refusal = modeRefusal(mode);
+  return {
+    workspace,
+    ...tools,
+    authorize: (proposal: ActionProposal): string | null => (mutates(proposal) ? refusal : null),
+  };
+}
+
+async function restoredSession(
+  root: string,
+  requestedId: string | undefined,
+): Promise<{ id: string; messages: Message[]; turns: number } | { error: string }> {
+  const store = new SessionStore(root);
+  const id = requestedId || store.list()[0]?.id;
+  if (id === undefined) return { error: "nothing recorded here to resume" };
+  const journal = store.load(id);
+  if (journal === null) return { error: `no such session: ${id}` };
+  const turns = [];
+  for await (const record of loadTraces(path.join(root, TRACES_SUBDIRECTORY, `${id}.jsonl`))) {
+    turns.push(record);
+  }
+  const observations = journal
+    .all()
+    .filter((event) => event.type === "action.finished")
+    .map((event) => (event.type === "action.finished" ? event.output : ""));
+  return { id, messages: resumeTranscript(turns, observations), turns: turns.length };
+}
+
 /**
  * Drive one turn: stream, decode incrementally, hand the turn to the run.
  *
@@ -759,16 +798,34 @@ export async function main(argv: readonly string[], io: IO = consoleIO): Promise
     return 0;
   }
 
+  if (options["json"] === true && options["stream-json"] === true) {
+    io.err("Choose either --json or --stream-json, not both.");
+    return 2;
+  }
   const root = path.resolve(typeof options["repo"] === "string" ? options["repo"] : ".");
   const workspace = new Workspace(root);
+  let mode: PermissionMode;
+  try {
+    mode = resolvePermissionMode(options, command ?? "");
+  } catch (error) {
+    io.err(error instanceof Error ? error.message : String(error));
+    return 2;
+  }
   const offline =
     command === "replay" ||
     command === "compare" ||
     command === "compare-little-coder" ||
     command === "sessions" ||
     command === "show" ||
-    command === "undo";
-  const project = projectConfig(root, io);
+    command === "undo" ||
+    command === "init" ||
+    command === "config" ||
+    command === "doctor";
+  const projectResult = readProjectConfig(root);
+  for (const warning of projectResult.warnings) io.err(warning);
+  for (const error of projectResult.errors) io.err(error);
+  if (projectResult.errors.length > 0) return 2;
+  const project = projectResult.config;
   let config = providerFrom(options);
   // Precedence: an explicit flag or environment variable beats the project
   // file, which beats the default. The flag has to win, or `--url` could not
@@ -779,6 +836,96 @@ export async function main(argv: readonly string[], io: IO = consoleIO): Promise
   if (project.model && typeof options["model"] !== "string" && !process.env["FORGE_MODEL"]) {
     config = { ...config, model: project.model };
   }
+
+  if (command === "init") {
+    try {
+      const initialized = initializeProject(root);
+      const result = {
+        created: initialized.created,
+        file: path.relative(root, initialized.file) || "forge.json",
+        config: initialized.config,
+      };
+      if (options["json"] === true) io.out(JSON.stringify(result, null, 2));
+      else {
+        io.out(
+          initialized.created
+            ? `Created ${result.file}. Review and commit it with your project.`
+            : `${result.file} already exists and was left unchanged.`,
+        );
+        const commands = initialized.config.verify ?? [];
+        if (commands.length > 0)
+          io.out(`verify: ${commands.map((item) => item.join(" ")).join(", ")}`);
+      }
+      return 0;
+    } catch (error) {
+      io.err(error instanceof Error ? error.message : String(error));
+      return 2;
+    }
+  }
+
+  if (command === "config") {
+    const result = {
+      version: FORGE_VERSION,
+      repository: root,
+      source: projectResult.source,
+      mode,
+      provider: {
+        url: config.baseUrl,
+        model: config.model || null,
+        contextWindow: config.contextWindow,
+        maxTokens: config.maxTokens,
+        temperature: config.temperature,
+      },
+      verify: project.verify ?? detectCommands(root),
+    };
+    if (options["json"] === true) io.out(JSON.stringify(result, null, 2));
+    else {
+      io.out(`Forge ${result.version}`);
+      io.out(`repository: ${result.repository}`);
+      io.out(`config: ${result.source ?? "detected defaults"}`);
+      io.out(`mode: ${result.mode}`);
+      io.out(`provider: ${result.provider.url}`);
+      io.out(`model: ${result.provider.model ?? "auto-discover"}`);
+      io.out(
+        result.verify.length === 0
+          ? "verify: none detected"
+          : `verify: ${result.verify.map((item) => item.join(" ")).join(", ")}`,
+      );
+    }
+    return 0;
+  }
+
+  if (command === "doctor") {
+    const verification = project.verify ?? detectCommands(root);
+    const provider = await probeProvider(config, { completion: true });
+    const result = {
+      ok: provider.ok,
+      version: FORGE_VERSION,
+      node: process.version,
+      repository: root,
+      config: projectResult.source,
+      mode,
+      verify: verification,
+      provider,
+    };
+    if (options["json"] === true) io.out(JSON.stringify(result, null, 2));
+    else {
+      io.out(`✓ Forge ${FORGE_VERSION} on ${process.version}`);
+      io.out(`✓ repository ${root}`);
+      io.out(
+        verification.length === 0
+          ? "! no verification command detected; run `forge init` or edit forge.json"
+          : `✓ verifier ${verification.map((item) => item.join(" ")).join(", ")}`,
+      );
+      if (provider.ok) {
+        io.out(`✓ provider ${config.baseUrl} · ${provider.selectedModel}`);
+      } else {
+        io.err(`✗ provider ${config.baseUrl}: ${provider.error ?? "unhealthy"}`);
+      }
+    }
+    return result.ok ? 0 : 2;
+  }
+
   if (!config.model && !offline) {
     // Nothing configured: ask the endpoint what it serves. A local server
     // nearly always serves exactly one model, and naming it in config goes
@@ -800,6 +947,27 @@ export async function main(argv: readonly string[], io: IO = consoleIO): Promise
   const native = options["native"] === true;
   const controller = new AbortController();
   process.once("SIGINT", () => controller.abort());
+
+  const codingCommand =
+    command === null ||
+    command === "run" ||
+    command === "plan" ||
+    command === "continue" ||
+    command === "resume";
+  if (codingCommand) {
+    const provider = await probeProvider(config, { completion: true });
+    if (!provider.ok) {
+      const message = `Provider preflight failed at ${config.baseUrl}: ${provider.error ?? "unhealthy endpoint"}`;
+      if (options["json"] === true) {
+        io.out(
+          JSON.stringify({ ok: false, error: "provider_preflight", message, provider }, null, 2),
+        );
+      } else if (options["stream-json"] === true) {
+        io.out(JSON.stringify({ type: "error", error: "provider_preflight", message, provider }));
+      } else io.err(message);
+      return 2;
+    }
+  }
 
   if (command === "compare") {
     const [baselineFile, candidateFile] = rest;
@@ -1124,7 +1292,7 @@ export async function main(argv: readonly string[], io: IO = consoleIO): Promise
     // cannot silently succeed on a directory with nothing in it.
     return records.length === 0 ? 2 : 0;
   }
-  if (command === "run") {
+  if (command === "run" || command === "plan") {
     return await headless(
       rest.join(" ").trim(),
       workspace,
@@ -1134,6 +1302,21 @@ export async function main(argv: readonly string[], io: IO = consoleIO): Promise
       io,
       native,
       project,
+      mode,
+    );
+  }
+  if (command === "continue" || command === "resume") {
+    return await interactive(
+      workspace,
+      config,
+      controller,
+      io,
+      native,
+      project,
+      options["task-packet"] === true,
+      options["batch-actions"] === true,
+      mode,
+      rest[0] === undefined ? {} : { id: rest[0] },
     );
   }
   if (command !== null) {
@@ -1150,6 +1333,8 @@ export async function main(argv: readonly string[], io: IO = consoleIO): Promise
     project,
     options["task-packet"] === true,
     options["batch-actions"] === true,
+    mode,
+    null,
   );
 }
 
@@ -1218,16 +1403,15 @@ async function headless(
   io: IO,
   native: boolean,
   project: ProjectConfig,
+  mode: PermissionMode,
 ): Promise<number> {
   if (!task) {
     io.err("forge run needs a task description.");
     return 2;
   }
-  const run = new Run(
-    { workspace, ...makeTools(workspace, controller.signal) },
-    options["yes"] === true,
-  );
+  const run = new Run(makeRunEffects(workspace, controller.signal, mode), options["yes"] === true);
   const asJson = options["json"] === true;
+  const streamJson = options["stream-json"] === true;
   const sessions = new SessionStore(workspace.root);
   const sessionId = newSessionId();
   const tracePath = traceFileFor(workspace.root, sessionId);
@@ -1240,7 +1424,8 @@ async function headless(
       // that only exists once the run succeeds is no use for diagnosing the
       // runs that did not. The final save repairs any torn tail.
       sessions.appendTo(sessionId, event);
-      if (!asJson) {
+      if (streamJson) io.out(JSON.stringify({ type: "event", event }));
+      else if (!asJson) {
         const line = renderHeadless(event);
         if (line !== null) io.out(line);
       }
@@ -1257,7 +1442,7 @@ async function headless(
   const messages: Message[] = [
     {
       role: "system",
-      content: systemPrompt(native, options["batch-actions"] === true),
+      content: systemPrompt(native, options["batch-actions"] === true, mode),
     },
     { role: "user", content: `${context.text}\n\n${task}` },
   ];
@@ -1287,17 +1472,20 @@ async function headless(
       // rediscovering that; the reason is already in the results above.
       if (result.stalled) break;
       if (result.finished) {
-        const objection = await gate(
-          run,
-          workspace,
-          config,
-          task,
-          commands,
-          controller.signal,
-          io,
-          asJson,
-          native,
-        );
+        const objection =
+          mode === "workspace"
+            ? await gate(
+                run,
+                workspace,
+                config,
+                task,
+                commands,
+                controller.signal,
+                io,
+                asJson || streamJson,
+                native,
+              )
+            : null;
         if (objection === null) {
           code = 0;
           break;
@@ -1325,15 +1513,17 @@ async function headless(
   await drained;
   sessions.save(sessionId, run.journal);
   const usage = summarize(usages);
-  if (asJson) {
-    const actions = collected.filter((event) => event.type === "action.proposed").length;
-    io.out(
-      JSON.stringify(
-        { ok: code === 0, session: sessionId, usage: { ...usage, actions }, state: run.snapshot() },
-        null,
-        2,
-      ),
-    );
+  const actions = collected.filter((event) => event.type === "action.proposed").length;
+  const resultDocument = {
+    ok: code === 0,
+    session: sessionId,
+    mode,
+    usage: { ...usage, actions },
+    state: run.snapshot(),
+  };
+  if (streamJson) io.out(JSON.stringify({ type: "result", result: resultDocument }));
+  else if (asJson) {
+    io.out(JSON.stringify(resultDocument, null, 2));
   } else {
     io.out(
       `${usage.turns} ${usage.turns === 1 ? "turn" : "turns"} · ${usage.chars} chars · ${usage.seconds.toFixed(1)}s · ${usage.charsPerSecond.toFixed(0)} ch/s · session ${sessionId}`,
@@ -1366,6 +1556,8 @@ async function interactive(
   project: ProjectConfig,
   taskPacket: boolean,
   batchActions: boolean,
+  mode: PermissionMode,
+  initialResume: { readonly id?: string } | null,
 ): Promise<number> {
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   // stdin can end at any moment -- Ctrl-D, a pipe running dry, a closed
@@ -1396,7 +1588,9 @@ async function interactive(
     });
   };
   const policy = new ApprovalPolicy();
-  const transcript: Message[] = [{ role: "system", content: systemPrompt(native, batchActions) }];
+  const transcript: Message[] = [
+    { role: "system", content: systemPrompt(native, batchActions, mode) },
+  ];
   const tty = process.stdout.isTTY === true;
   const sessions = new SessionStore(workspace.root);
   const sessionId = newSessionId();
@@ -1406,6 +1600,17 @@ async function interactive(
   let commands = project.verify ?? detectCommands(workspace.root);
   let lastReceipt: ContextReceipt | null = null;
   const contextBudget = 24_000;
+  let resumeNotice: string | null = null;
+  if (initialResume !== null) {
+    const restored = await restoredSession(workspace.root, initialResume.id);
+    if ("error" in restored) {
+      rl.close();
+      io.err(restored.error);
+      return 2;
+    }
+    transcript.push(...restored.messages);
+    resumeNotice = `resumed ${restored.id}: ${restored.turns} turns of history`;
+  }
 
   io.out("");
   io.out(
@@ -1416,7 +1621,8 @@ async function interactive(
     }),
   );
   io.out("");
-  io.out(`  ${path.basename(workspace.root)} · ${config.model}`);
+  io.out(`  ${path.basename(workspace.root)} · ${config.model} · ${mode}`);
+  if (resumeNotice !== null) io.out(`  ${resumeNotice}`);
   io.out("  /help for commands, /exit to leave");
   io.out("");
 
@@ -1456,33 +1662,16 @@ async function interactive(
         continue;
       }
       if (input.startsWith("/resume")) {
-        const wanted = input.slice("/resume".length).trim();
-        const store = new SessionStore(workspace.root);
-        const id = wanted || store.list()[0]?.id;
-        if (id === undefined) {
-          io.out("  nothing recorded here to resume");
+        const wanted = input.slice("/resume".length).trim() || undefined;
+        const restored = await restoredSession(workspace.root, wanted);
+        if ("error" in restored) {
+          io.out(`  ${restored.error}`);
           continue;
         }
-        const journal = store.load(id);
-        if (journal === null) {
-          io.out(`  no such session: ${id}`);
-          continue;
-        }
-        const turns = [];
-        for await (const record of loadTraces(
-          path.join(workspace.root, TRACES_SUBDIRECTORY, `${id}.jsonl`),
-        )) {
-          turns.push(record);
-        }
-        const observations = journal
-          .all()
-          .filter((event) => event.type === "action.finished")
-          .map((event) => (event.type === "action.finished" ? event.output : ""));
-        const restored = resumeTranscript(turns, observations);
         // Appended to the live transcript rather than replacing it, so a
         // resume adds history instead of discarding whatever was said first.
-        transcript.push(...restored);
-        io.out(`  resumed ${id}: ${turns.length} turns of history`);
+        transcript.push(...restored.messages);
+        io.out(`  resumed ${restored.id}: ${restored.turns} turns of history`);
         continue;
       }
       if (input === "/replay") {
@@ -1521,7 +1710,7 @@ async function interactive(
       const context = taskContext(workspace, input, contextBudget, taskPacket);
       lastReceipt = context.receipt;
       transcript.push({ role: "user", content: `${context.text}\n\n${input}` });
-      const run = new Run({ workspace, ...makeTools(workspace, controller.signal) }, false, policy);
+      const run = new Run(makeRunEffects(workspace, controller.signal, mode), false, policy);
       const drained = (async () => {
         for await (const event of run.events()) {
           sessions.appendTo(sessionId, event);
@@ -1579,17 +1768,20 @@ async function interactive(
           transcript.push({ role: "assistant", content: result.text });
           if (result.stalled) break;
           if (result.finished) {
-            const objection = await gate(
-              run,
-              workspace,
-              config,
-              input,
-              commands,
-              controller.signal,
-              io,
-              false,
-              native,
-            );
+            const objection =
+              mode === "workspace"
+                ? await gate(
+                    run,
+                    workspace,
+                    config,
+                    input,
+                    commands,
+                    controller.signal,
+                    io,
+                    false,
+                    native,
+                  )
+                : null;
             if (objection === null) break;
             run.reopen();
             transcript.push({ role: "user", content: objection });

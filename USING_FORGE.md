@@ -6,12 +6,14 @@ without getting hurt. Everything here is backed by measurements in `bench/`.
 ## 1. Point it at a model
 
 Forge talks to any OpenAI-compatible endpoint and asks `/v1/models` what is
-served, so swapping models needs no config.
+served. Before an interactive, run, plan, or resumed coding session, it also
+performs a one-token completion preflight. This catches gateways that advertise
+a model whose runtime profile is not actually active.
 
 ```sh
 export FORGE_URL=http://127.0.0.1:8790/v1      # default
 export FORGE_MODEL=qwen3-coder-30b-a3b-instruct-q4_k_m
-forge sessions                                  # cheap check that it resolves
+forge doctor                                    # models, active runtime, verifier
 ```
 
 Per-project, commit a `forge.json` at the repo root instead:
@@ -39,7 +41,13 @@ a model that does not emit compiling code. See `bench/MODEL_SCALING.md`.
 ```sh
 forge                          # interactive, in the current directory
 forge run "<task>"             # one shot, exits 0 on success
-forge run "<task>" --yes       # approve every action (CI, batch)
+forge run "<task>" --yes       # approve workspace effects (CI, batch)
+forge plan "<task>"            # read/search and return a plan; no effects
+forge run "<question>" --read-only
+forge continue [id]            # reopen interactive chat with retained history
+forge doctor                   # provider/model/verifier health
+forge init                     # create forge.json from detected checks
+forge config --json            # resolved project and provider settings
 forge sessions                 # what has been run here
 forge show <id>                # replay a recorded session
 forge undo [id]                # put back what a session changed
@@ -50,7 +58,13 @@ missed), `/verify` (the verification command it detected), `/replay`,
 `/approvals`.
 
 At an approval prompt: enter or `a` applies, `always` approves that kind for the
-session, anything else skips.
+session, anything else skips. `plan` and `read-only` are capability restrictions
+inside the Run actor: `--yes`, native tool calls, and malformed model output
+cannot bypass them.
+
+For automation, `--json` writes one final document. `--stream-json` writes one
+JSON object per durable Run event and ends with a `{"type":"result",...}` record.
+Do not combine the two modes.
 
 ## 3. What it is good at
 
@@ -83,7 +97,8 @@ deciding *what* to build. Do not assume it transfers.
 ## 5. How to actually use it safely
 
 1. **Work on a branch, or commit first.** Every session is reversible with
-   `forge undo`, but a clean git state is the real backstop.
+   `forge undo`, but a clean git state is the real backstop. Forge does not yet
+   isolate normal runs in disposable Git worktrees.
 2. **Set `verify` in `forge.json`.** A run with no verification command reports
    that it could not verify rather than pretending — but you get far more from
    a real command.

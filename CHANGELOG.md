@@ -11,6 +11,11 @@ All notable product changes are recorded here. Forge follows semantic versioning
 - Cross-platform Node CI for Linux, macOS, and Windows.
 - Package dry-run validation in CI.
 - Current TypeScript architecture, security, and feature-status documentation.
+- `forge doctor`, `forge init`, and `forge config` product commands.
+- Provider/model completion preflight before coding sessions.
+- Capability-enforced `workspace`, `read-only`, and `plan` modes.
+- `forge continue` / `forge resume` top-level session continuation.
+- `--stream-json` durable event and final-result protocol.
 
 ### Reliability baseline
 
@@ -24,3 +29,4 @@ All notable product changes are recorded here. Forge follows semantic versioning
 - No OS-level sandbox or automatic disposable-worktree promotion.
 - No MCP, plugin, hook, or remote-worker API.
 - Session resume restores observable history but not an in-flight provider request.
+- Normal runs still edit the selected working tree; disposable-worktree promotion remains planned.

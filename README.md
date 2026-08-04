@@ -28,9 +28,10 @@ The npm package is currently a **0.1 public alpha**. See [`docs/STATUS.md`](docs
 
 ## Status
 
-`forge` on PATH runs this. It plans nothing, reads, edits by anchored
-search/replace, runs approved commands, and asks before it changes anything.
-Driven end to end against a local qwen3-coder-30b.
+`forge` on PATH runs this. It supports read-only and plan modes, edits through
+anchored search/replace, runs approved commands, verifies completion, and asks
+before workspace effects unless explicitly automated. Driven end to end against
+local Qwen coder models.
 
 **Measured, as of 2026-08-04:**
 
@@ -87,7 +88,13 @@ Conversion is a floor on quality, not a substitute for it.
 ```
 forge                     interactive chat in the current directory
 forge run "<task>"        one shot, exit 0 on success
-forge run "<task>" --yes  approve everything (CI, batch)
+forge run "<task>" --yes  approve workspace effects (CI, batch)
+forge plan "<task>"       inspect and return a plan without effects
+forge run "<question>" --read-only
+forge doctor              provider/model/verifier diagnostics
+forge init                create an idempotent forge.json
+forge config --json       resolved configuration
+forge continue [id]       reopen interactive chat with retained history
 forge replay              score the decoder on everything recorded here
 forge sessions            what has been run here
 forge show <id>           replay a recorded session
@@ -103,11 +110,14 @@ forge compare-little-coder <forge-report> <little-coder-report> <case-manifest>
                           protocol (OpenAI and Anthropic wires, auto-detected)
   --task-packet           include bounded student-facing exercise docs
   --batch-actions         invite bounded independent reads/known-file edits
+  --mode <mode>           workspace, read-only, or plan
+  --stream-json           durable Run events as JSONL plus a final result
 ```
 
 It defaults to `http://127.0.0.1:8790/v1` and asks the endpoint what it serves
-via `/v1/models`, so swapping the served model needs no configuration. Override
-with `--url` / `FORGE_URL` and `--model` / `FORGE_MODEL`.
+via `/v1/models`. Coding commands also perform a minimal completion preflight,
+so a gateway that advertises an inactive model profile fails before the agent
+starts. Override with `--url` / `FORGE_URL` and `--model` / `FORGE_MODEL`.
 
 `FORGE_TRACE=<path>` writes every turn's exact bytes plus the decoded proposals
 and repairs, one JSON object per line. Reach for it first when a run misbehaves:

@@ -59,6 +59,125 @@ export async function discoverModel(
   }
 }
 
+export interface ProviderProbe {
+  readonly ok: boolean;
+  readonly status: number | null;
+  readonly models: readonly string[];
+  readonly selectedModel: string | null;
+  readonly completionChecked: boolean;
+  readonly error: string | null;
+}
+
+export interface ProviderProbeOptions {
+  readonly completion?: boolean | undefined;
+  readonly fetchLike?: FetchLike | undefined;
+}
+
+/**
+ * Validate endpoint discovery and, when requested, one minimal non-streaming
+ * completion. `/models` alone is not enough for gateways that advertise several
+ * models while only one runtime profile is active.
+ */
+export async function probeProvider(
+  config: ProviderConfig,
+  options: ProviderProbeOptions = {},
+): Promise<ProviderProbe> {
+  const fetchLike = options.fetchLike ?? globalThis.fetch;
+  const headers: Record<string, string> = {};
+  const key = process.env[config.apiKeyEnv] ?? "";
+  if (key) headers["authorization"] = `Bearer ${key}`;
+  try {
+    const response = await fetchLike(`${config.baseUrl}/models`, {
+      headers,
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!response.ok) {
+      return {
+        ok: false,
+        status: response.status,
+        models: [],
+        selectedModel: null,
+        completionChecked: false,
+        error: `HTTP ${response.status} from ${config.baseUrl}/models: ${clip(await response.text())}`,
+      };
+    }
+    const parsed = (await response.json()) as { data?: Array<{ id?: unknown }> };
+    const models = (parsed.data ?? []).flatMap((item) =>
+      typeof item.id === "string" && item.id.length > 0 ? [item.id] : [],
+    );
+    const selectedModel = config.model || models[0] || null;
+    if (selectedModel === null) {
+      return {
+        ok: false,
+        status: response.status,
+        models,
+        selectedModel: null,
+        completionChecked: false,
+        error: "the endpoint advertised no usable model ids",
+      };
+    }
+    if (config.model && !models.includes(config.model)) {
+      return {
+        ok: false,
+        status: response.status,
+        models,
+        selectedModel,
+        completionChecked: false,
+        error: `${config.model} is not advertised by the endpoint`,
+      };
+    }
+    if (options.completion !== true) {
+      return {
+        ok: true,
+        status: response.status,
+        models,
+        selectedModel,
+        completionChecked: false,
+        error: null,
+      };
+    }
+    const completion = await fetchLike(`${config.baseUrl}/chat/completions`, {
+      method: "POST",
+      headers: { ...headers, "content-type": "application/json" },
+      body: JSON.stringify({
+        model: selectedModel,
+        messages: [{ role: "user", content: "Reply with OK." }],
+        temperature: 0,
+        max_tokens: 1,
+        stream: false,
+      }),
+      signal: AbortSignal.timeout(30_000),
+    });
+    if (!completion.ok) {
+      return {
+        ok: false,
+        status: completion.status,
+        models,
+        selectedModel,
+        completionChecked: true,
+        error: `HTTP ${completion.status} from ${config.baseUrl}: ${clip(await completion.text())}`,
+      };
+    }
+    return {
+      ok: true,
+      status: completion.status,
+      models,
+      selectedModel,
+      completionChecked: true,
+      error: null,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      status: null,
+      models: [],
+      selectedModel: config.model || null,
+      completionChecked: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
 export interface Message {
   readonly role: "system" | "user" | "assistant";
   readonly content: string;

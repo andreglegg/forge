@@ -335,6 +335,11 @@ export class ApprovalPolicy {
 
 export interface Effects {
   readonly workspace: Workspace;
+  /**
+   * Optional capability gate evaluated before preview, approval, or execution.
+   * Returning a reason refuses the action even when auto-approval is enabled.
+   */
+  readonly authorize?: (proposal: ActionProposal) => string | null;
   /** Executes a non-edit tool call. Returns output for the model. */
   readonly runTool: (proposal: ActionProposal) => Promise<{ ok: boolean; output: string }>;
   /**
@@ -584,6 +589,13 @@ export class Run {
       const id = `a${this.counter}`;
       const summary = describeProposal(proposal);
       this.emit({ type: "action.proposed", id, summary, proposal });
+
+      const authorizationFailure = this.effects.authorize?.(proposal) ?? null;
+      if (authorizationFailure !== null) {
+        this.report(results, { id, ok: false, output: authorizationFailure });
+        failedThisTurn = true;
+        continue;
+      }
 
       if (looksFirst && sawObservation && mutates(proposal)) {
         this.report(results, {
