@@ -95,7 +95,24 @@ export interface ActionResult {
 export interface TurnResult {
   readonly results: ActionResult[];
   readonly finished: boolean;
+  /**
+   * The run has produced no action for several turns running and should stop.
+   *
+   * Distinct from `finished`, which means the work is done. This means the
+   * opposite: nothing is happening and continuing would only spend the
+   * remaining turn budget discovering that again.
+   */
+  readonly stalled?: boolean;
 }
+
+/**
+ * Consecutive actionless turns tolerated before a run is declared stalled.
+ *
+ * Two, not one: a single reply that says only "let me look at the file" is
+ * ordinary and self-corrects. Two in a row is a loop -- in the case this exists
+ * for it ran eighteen times.
+ */
+const STALL_LIMIT = 2;
 
 /**
  * `Omit` over a union collapses it to the keys every member shares, which for
@@ -393,6 +410,18 @@ class LoopGuard {
     return null;
   }
 
+  /**
+   * Whether the model has read this file as it currently stands.
+   *
+   * The signal that separates a considered whole-file replacement from a blind
+   * clobber. A read recorded against an older revision does not count: the file
+   * has changed since, so what the model is replacing is not what it saw.
+   */
+  hasReadCurrent(target: string, workspace: Workspace): boolean {
+    const revision = workspace.revision(target);
+    return revision !== null && this.readRevisions.has(`${target}@${revision}`);
+  }
+
   recordFailure(proposal: ActionProposal): void {
     this.failed.add(canonicalKey(proposal));
   }
@@ -425,6 +454,8 @@ export class Run {
   private readonly guard = new LoopGuard();
   private cancelled = false;
   private counter = 0;
+  /** Consecutive turns that produced no action. Reset by any action at all. */
+  private stalls = 0;
 
   constructor(
     private readonly effects: Effects,
@@ -496,11 +527,41 @@ export class Run {
     text: string;
     proposals: ActionProposal[];
     final: string | null;
+    /** Decoder repairs for this turn. `truncated_edit_block` is the one that matters here. */
+    repairs?: readonly string[];
   }): Promise<TurnResult> {
     this.emit({ type: "turn.started", turn: this.state.turn + 1 });
     if (turn.text) {
       this.emit({ type: "model.text", text: turn.text });
     }
+
+    // A turn with nothing to do and nothing to report is the silent stall. Say
+    // what went wrong -- the decoder already knows -- rather than letting the
+    // model retry the identical oversized edit until the budget runs out.
+    if (turn.proposals.length === 0 && turn.final === null) {
+      this.stalls += 1;
+      const truncated = turn.repairs?.includes("truncated_edit_block") === true;
+      const results: ActionResult[] = [];
+      this.report(results, {
+        id: `stall${this.stalls}`,
+        ok: false,
+        output: truncated
+          ? "Your edit was cut off before it finished, so nothing could be applied: the change was larger than one reply can hold. Do not resend it. Make a smaller, targeted edit that quotes only the few lines that actually change, or build the result across several edits. For a whole-file rewrite, write a new file instead."
+          : "That reply contained no action, so nothing happened. Send an action -- a read, a command, or an edit -- or report the task complete.",
+      });
+      if (this.stalls >= STALL_LIMIT) {
+        this.emit({
+          type: "run.finished",
+          ok: false,
+          summary: truncated
+            ? "stopped: the same oversized edit was truncated on every attempt, so no change could be applied"
+            : "stopped: several replies in a row contained no action",
+        });
+        return { results, finished: false, stalled: true };
+      }
+      return { results, finished: false };
+    }
+    this.stalls = 0;
 
     // A turn that both looks and mutates wrote its anchor blind: the model
     // composed the edit before it had seen the file it is editing. Observed
@@ -514,7 +575,7 @@ export class Run {
     let failedThisTurn = false;
     let committedThisTurn = false;
 
-    for (const proposal of turn.proposals) {
+    for (let proposal of turn.proposals) {
       if (this.cancelled) {
         this.emit({ type: "run.cancelled" });
         return { results, finished: false };
@@ -533,6 +594,27 @@ export class Run {
         });
         failedThisTurn = true;
         continue;
+      }
+
+      // CREATE over an existing file is how a model spells "replace this
+      // wholesale", and it is the only spelling that fits in one reply: a
+      // SEARCH/REPLACE has to quote the original as well as its replacement.
+      // Refusing it outright cost a live session eighteen turns. Allow it
+      // exactly when the model has read the file as it now stands.
+      if (proposal.kind === "edit" && proposal.create) {
+        const exists = this.effects.workspace.revision(proposal.path) !== null;
+        if (exists && !this.guard.hasReadCurrent(proposal.path, this.effects.workspace)) {
+          this.report(results, {
+            id,
+            ok: false,
+            output: `${proposal.path} already exists. Read it first, then send this again to replace it wholesale -- or edit the part that changes.`,
+          });
+          failedThisTurn = true;
+          continue;
+        }
+        if (exists) {
+          proposal = { ...proposal, create: false, rewrite: true };
+        }
       }
 
       const refusal = this.guard.check(proposal, this.effects.workspace);

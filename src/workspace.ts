@@ -177,7 +177,10 @@ export class Workspace {
     const before = beforeBytes?.toString("utf8") ?? "";
     let after = before;
     for (const operation of proposal.operations) {
-      if (proposal.create) {
+      // A wholesale replacement of a file the model has read. Same shape as a
+      // creation -- only the new text, no quoted original -- which is why it
+      // fits in one reply where a SEARCH/REPLACE of the whole file does not.
+      if (proposal.create || proposal.rewrite) {
         after = operation.replace;
         continue;
       }

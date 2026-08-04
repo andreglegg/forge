@@ -94,6 +94,7 @@ describe("a no-op edit is refused", () => {
           kind: "edit",
           path: "a.ts",
           create: false,
+          rewrite: false,
           baseRevision: null,
           operations: [{ search: "value = 1;", replace: "value = 1;", expectedMatches: 1 }],
         }),
@@ -111,6 +112,7 @@ describe("a no-op edit is refused", () => {
         kind: "edit",
         path: "a.ts",
         create: false,
+        rewrite: false,
         baseRevision: null,
         operations: [{ search: "value = 1;", replace: "value = 2;", expectedMatches: 1 }],
       });

@@ -663,6 +663,8 @@ async function oneTurn(
   final: string | null;
   results: ActionResult[];
   finished: boolean;
+  /** The run produced no action for several turns and should stop. */
+  stalled: boolean;
   guardNotice: string | null;
   committedMutation: boolean;
   ranCommand: boolean;
@@ -723,13 +725,14 @@ async function oneTurn(
       // take the run down with it.
     }
   }
-  const outcome = await run.submit(turn);
+  const outcome = await run.submit({ ...turn, repairs: turn.repairs });
   // The transcript gets the *canonical* rendering, not `raw`. See renderTurn.
   return {
     text: renderTurn(turn),
     final: turn.final,
     results: outcome.results,
     finished: outcome.finished,
+    stalled: outcome.stalled === true,
     guardNotice: bounded.notice,
     committedMutation: outcome.results.some(
       (result) => result.ok && result.output.startsWith("applied "),
@@ -1271,6 +1274,9 @@ async function headless(
         options["batch-actions"] === true,
       );
       usages.push(meter.finish());
+      // Nothing is happening. Continuing would only spend the remaining turns
+      // rediscovering that; the reason is already in the results above.
+      if (result.stalled) break;
       if (result.finished) {
         const objection = await gate(
           run,
@@ -1562,6 +1568,7 @@ async function interactive(
           clearStatus(tty);
           usages.push(meter.finish());
           transcript.push({ role: "assistant", content: result.text });
+          if (result.stalled) break;
           if (result.finished) {
             const objection = await gate(
               run,

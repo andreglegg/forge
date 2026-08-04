@@ -63,6 +63,14 @@ export const EditProposal = z.strictObject({
   kind: z.literal("edit"),
   path: z.string().min(1),
   create: z.boolean().default(false),
+  /**
+   * Replace the file's entire contents with the single operation's `replace`.
+   *
+   * Set by the runtime, never by the model: it is what a CREATE over a file the
+   * model has already read is converted into. Keeping it out of the protocol
+   * prompt is deliberate -- see the note below on prompt dilution.
+   */
+  rewrite: z.boolean().default(false),
   operations: z.array(EditOperation).min(1),
   /**
    * sha256 of the file as the model was shown it, or null for a creation.
