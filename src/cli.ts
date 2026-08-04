@@ -89,6 +89,7 @@ import {
   probeProvider,
   streamCompletion,
 } from "./provider.js";
+import { relatedRepository, resolveRelativeModuleDependencies } from "./relationships.js";
 import { banner, renderHeadless, renderInteractive, useColor, useTruecolor } from "./render.js";
 import {
   formatReport,
@@ -373,31 +374,6 @@ const INLINE_FILE_MAX_CHARS = 6_000;
 const VERIFY_CONFIRMATIONS = 2;
 
 /**
- * Local files that an inlined file imports.
- *
- * A bug is frequently not in the file the task names. Asked to fix a failing
- * price calculation, the model was shown `price.js` -- which computes correctly
- * -- while the wrong constant sat in the `config.js` it imports, unnamed by the
- * task and therefore unranked by a lexical scorer. forge spent 250 seconds per
- * run failing that, against 17 for a competitor that can grep.
- *
- * Following one level of local imports is the cheap general form of what that
- * grep does: if a file is worth showing, what it depends on usually is too.
- * One level, not transitive -- depth two on a real project pulls in the world.
- *
- * Relative specifiers only. A package import leads to node_modules, which is
- * never the answer and is always enormous.
- */
-function localImports(text: string): string[] {
-  const found = new Set<string>();
-  for (const match of text.matchAll(/(?:from|import)\s*["'](\.[^"']+)["']/g)) {
-    const specifier = match[1];
-    if (specifier !== undefined) found.add(specifier);
-  }
-  return [...found];
-}
-
-/**
  * The task-dependent half: which files matter for *this* request.
  *
  * Ranked rather than dumped, and the top few are inlined whole. Inlining is the
@@ -468,12 +444,8 @@ export function taskContext(
   const followed: ContextItem[] = [];
   for (const item of items) {
     if (item.kind !== "file" || item.path === undefined || !inlinedPaths.has(item.path)) continue;
-    for (const specifier of localImports(item.text)) {
-      const base = path.posix.normalize(path.posix.join(path.posix.dirname(item.path), specifier));
-      const candidate = paths.find(
-        (known) => known === base || known === `${base}.js` || known === `${base}.ts`,
-      );
-      if (candidate === undefined || alreadyInlined.has(candidate)) continue;
+    for (const candidate of resolveRelativeModuleDependencies(index, item.path, item.text)) {
+      if (alreadyInlined.has(candidate)) continue;
       let contents: string;
       try {
         const read = readRepositoryText(workspace.root, candidate, {
@@ -612,6 +584,12 @@ function makeTools(workspace: Workspace, signal?: AbortSignal) {
           return {
             ok: true,
             output: `${result.output}\n[${result.hits} matches in ${result.filesScanned} files${result.truncated ? "; truncated" : ""}]`,
+          };
+        }
+        if (proposal.tool === "related") {
+          return {
+            ok: true,
+            output: relatedRepository(workspace.root, String(args["path"] ?? "")).output,
           };
         }
         if (proposal.tool === "run") {

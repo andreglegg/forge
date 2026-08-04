@@ -24,6 +24,8 @@ All notable product changes are recorded here. Forge follows semantic versioning
 - Explicit bounded headless lifecycle hooks for session start, verification boundaries, and session end.
 - Transactional `DELETE`, `MKDIR`, `MOVE`, `COPY`, and `RENAME` support in text and native protocols for files, bounded directory trees, binary content, and symlinks. Includes separate approvals, snapshot revalidation, absence-aware verification, binary-safe per-entry undo, protected metadata roots, and explicit no-overwrite semantics.
 - Project-scale repository indexing with Git ignore awareness, a compact project map, one-level `LIST`, deep `GLOB`/`GREP`/`SEARCH`, exact ranged `READ`, binary/secret filtering, and bounded non-Git fallback discovery.
+- Dependency-aware `RELATED <path>` inspection for static relative TypeScript/JavaScript imports, inbound dependents, nearest package ownership, and related tests, with the same resolver used for one-hop task context.
+- A published product plan covering project intelligence, reliable execution, integration boundaries, and release maturity.
 - npm, pnpm, Yarn, and Bun verification detection with root `check` preference, plus shell-free package-specific verification through validated repository working directories.
 
 ### Reliability baseline
@@ -36,6 +38,7 @@ All notable product changes are recorded here. Forge follows semantic versioning
 ### Known limitations
 
 - No OS-level process, network, or resource sandbox; Git-worktree isolation protects repository mutations only.
+- Static relationships do not yet resolve package imports, path aliases, package exports, exact symbols, or language-server references.
 - No MCP, general plugin, interactive-hook, or remote-worker API.
 - Session resume restores observable history but not an in-flight provider request.
 - Isolation is opt-in and currently available only for headless workspace-mode runs from a fully clean Git root.

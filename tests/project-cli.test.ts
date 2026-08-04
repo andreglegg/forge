@@ -20,7 +20,7 @@ function stream(response: import("node:http").ServerResponse, content: string): 
 }
 
 describe("real-project repository navigation", () => {
-  test("navigates a deep 200+ file project with glob, grep, and ranged read", async () => {
+  test("navigates a deep 200+ file project with search, ranged read, and relationships", async () => {
     const root = realpathSync(await mkdtemp(path.join(tmpdir(), "forge-project-cli-")));
     for (let index = 0; index < 220; index += 1) {
       const directory = path.join(root, "packages", "generated", String(index));
@@ -33,12 +33,20 @@ describe("real-project repository navigation", () => {
     mkdirSync(path.join(root, "packages", "api", "src", "routes"), { recursive: true });
     mkdirSync(path.join(root, "packages", "api", "src", "deep"), { recursive: true });
     writeFileSync(
+      path.join(root, "packages", "api", "package.json"),
+      JSON.stringify({ name: "@example/api" }),
+    );
+    writeFileSync(
       path.join(root, "packages", "api", "src", "routes", "health.test.ts"),
-      "export const healthTest = true;\n",
+      'import { REQUEST_SENTINEL } from "../deep/handler";\nexport const healthTest = REQUEST_SENTINEL === 42;\n',
+    );
+    writeFileSync(
+      path.join(root, "packages", "api", "src", "deep", "config.ts"),
+      "export const API_VALUE = 42;\n",
     );
     writeFileSync(
       path.join(root, "packages", "api", "src", "deep", "handler.ts"),
-      "export const REQUEST_SENTINEL = 42;\n",
+      'import { API_VALUE } from "./config";\nexport const REQUEST_SENTINEL = API_VALUE;\n',
     );
     writeFileSync(
       path.join(root, "packages", "api", "src", "deep", "large.ts"),
@@ -50,6 +58,7 @@ describe("real-project repository navigation", () => {
       "GLOB **/*.test.ts\n",
       "GREP REQUEST_SENTINEL\n",
       "READ packages/api/src/deep/large.ts:40-44\n",
+      "RELATED packages/api/src/deep/handler.ts\n",
       "DONE inspected the project\n",
     ];
     const server = createServer((request, response) => {
@@ -88,7 +97,7 @@ describe("real-project repository navigation", () => {
       const code = await main(
         [
           "plan",
-          "Inspect this project: locate its tests, find REQUEST_SENTINEL, and read lines 40-44 of the large API file.",
+          "Inspect this project: locate its tests, find REQUEST_SENTINEL, read lines 40-44 of the large API file, and identify the handler's dependencies, dependents, package, and related tests.",
           "--repo",
           root,
           "--url",
@@ -110,15 +119,20 @@ describe("real-project repository navigation", () => {
       expect(result.ok).toBe(true);
       expect(result.mode).toBe("plan");
       expect(result.state.committed).toEqual([]);
-      expect(streamRequests).toHaveLength(4);
-      expect(streamRequests[0]).toContain("Repository index: 223 files");
+      expect(streamRequests).toHaveLength(5);
+      expect(streamRequests[0]).toContain("Repository index: 225 files");
       expect(streamRequests[1]).toContain("packages/api/src/routes/health.test.ts");
       expect(streamRequests[2]).toContain(
-        "packages/api/src/deep/handler.ts:1: export const REQUEST_SENTINEL = 42;",
+        "packages/api/src/deep/handler.ts:2: export const REQUEST_SENTINEL = API_VALUE;",
       );
       expect(streamRequests[3]).toContain("exact lines 40-44 of 121");
       expect(streamRequests[3]).toContain("export const line40 = 40;");
       expect(streamRequests[3]).toContain("export const line44 = 44;");
+      expect(streamRequests[4]).toContain("Relationships for packages/api/src/deep/handler.ts");
+      expect(streamRequests[4]).toContain("Package: packages/api");
+      expect(streamRequests[4]).toContain("packages/api/src/deep/config.ts");
+      expect(streamRequests[4]).toContain("packages/api/src/routes/health.test.ts");
+      expect(streamRequests[4]).toContain("Related tests (1)");
     } finally {
       await new Promise<void>((resolve, reject) =>
         server.close((error) => (error ? reject(error) : resolve())),

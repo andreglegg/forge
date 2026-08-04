@@ -25,7 +25,16 @@ describe("public package contract", () => {
     expect(pkg.version).toBe(FORGE_VERSION);
     expect(pkg.license).toBe("Apache-2.0");
     expect(pkg.bin).toEqual({ forge: "bin/forge" });
-    expect(pkg.files).toEqual(expect.arrayContaining(["bin", "dist", "README.md", "LICENSE"]));
+    expect(pkg.files).toEqual(
+      expect.arrayContaining([
+        "bin",
+        "dist",
+        "README.md",
+        "LICENSE",
+        "docs/PRODUCT_PLAN.md",
+        "docs/ROADMAP.md",
+      ]),
+    );
     expect(pkg.scripts?.["prepack"]).toContain("npm run check");
     expect(pkg.scripts?.["prepack"]).toContain("npm run build");
   });

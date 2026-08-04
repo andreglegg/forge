@@ -1,6 +1,6 @@
 # Forge product roadmap
 
-This roadmap applies to the current TypeScript product. See `STATUS.md` for the shipped feature matrix.
+This roadmap applies to the current TypeScript product. See `STATUS.md` for the shipped feature matrix and `PRODUCT_PLAN.md` for the ordered product milestones and exit criteria.
 
 ## 0.1 public alpha
 
@@ -12,10 +12,13 @@ This roadmap applies to the current TypeScript product. See `STATUS.md` for the 
 - JSONL event output for automation.
 - Opt-in detached Git-worktree execution, retained binary patches, and verified conflict-checked promotion.
 - Named model profiles, evidence-preserving compaction, promotion risk scanning, and explicit bounded headless lifecycle hooks.
-- Current architecture, security, and operations documentation.
+- Git-aware project navigation plus bounded static TypeScript/JavaScript dependency, dependent, package, and related-test relationships.
+- Current architecture, security, product-plan, and operations documentation.
 
 ## 0.2 trusted daily use
 
+- TypeScript/JavaScript symbol declarations, exact references, and dependency-backed context selection on top of shipped relative module relationships.
+- Change-impact analysis and focused development verification while preserving the authoritative completion gate.
 - Execution-backend interface with optional Docker/Podman isolation.
 - Network-off defaults and resource limits for sandbox backends.
 - Stronger semantic compaction and compaction telemetry on top of the shipped deterministic evidence guard.

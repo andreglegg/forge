@@ -12,7 +12,7 @@ engineering state.
 | Local suite (15 tasks, 3 trials) | **14/15** every trial, 0 false successes | `bench/DECOMPOSE_INSTRUCTION.md` |
 | Greenfield build | works, then over-reports | same |
 | Model scaling | 7B 4.8% / 14B 11.9-14.3% / 30B-MoE 64-67% | `bench/MODEL_SCALING.md` |
-| Tests | 197 pass, 1 skip | `npm run check` |
+| Tests | **311 pass, 1 skip** | `npm run check` on 2026-08-05 |
 
 ## Measurement discipline (read before running an experiment)
 
@@ -49,42 +49,60 @@ Both in `bench/TASK_PACKET.md`.
 
 ## Landed since the last handoff
 
-- `feat(verify): confirm a pass before believing it` — the completion gate
-  re-runs a *passing* suite (`VERIFY_CONFIRMATIONS = 2`) and reports
-  `flaky: true` when the pass does not reproduce, phrased to the model as
-  nondeterminism rather than a broken build. Failing suites are never re-run,
-  so cost is bounded; measured on the pinned 42 it cost **no** wall-clock.
-- `bench: add a greenfield task that scores determinism` —
-  `bench/16-greenfield-tests`. The agent writes the module *and* its tests; the
-  judge asserts behaviour independently and runs the suite 3 times.
+The TypeScript product has moved from a benchmark harness toward a public-alpha
+developer tool. Recent committed slices include release packaging, provider
+preflight and product commands, permission modes, JSONL events, durable resume,
+Git-worktree isolation and verified promotion, named model profiles,
+evidence-preserving compaction, promotion risk scanning, and explicit bounded
+headless lifecycle hooks.
 
-### Why that gate change exists
+The current working slice adds dependency-aware repository intelligence:
 
-A greenfield trial produced a project whose two test files shared one JSON file.
-`node --test` runs files in parallel, so the suite raced, passed once, was
-accepted, and failed 1 run in 6 afterwards. The gate had run the verifier once
-and treated a pass as proof. It also guards candidate promotion, so an
-unconfirmed pass could launder a bad change into an accepted one.
+- `docs/PRODUCT_PLAN.md` defines ordered milestones across project intelligence,
+  reliable execution, integration boundaries, and release maturity.
+- `src/relationships.ts` builds a bounded static graph for relative TypeScript
+  and JavaScript imports, export-from declarations, `require`, and string-literal
+  dynamic imports.
+- `RELATED <path>` has text/native parity and reports nearest package ownership,
+  direct dependencies, inbound dependents, and related tests.
+- The same resolver replaces the old one-pattern import follower in task context,
+  including TypeScript `.js` specifiers and directory indexes.
+- One graph scan is bounded to 10,000 supported source files and 512 KiB per
+  file. Package imports, path aliases, package exports, symbols, and language-
+  server references remain explicitly unsupported.
+- A scripted provider test proves the full tool loop on a 225-file deep project.
+- `npm run check` passes 311 tests with one intentional pty skip; `npm run build`,
+  `npm pack --dry-run`, and `git diff --check` also pass.
 
-Regression check: `forge-verifyconfirm-42-v1` scored 23/42. **Not attributable
-to the change** — zero FLAKY verdicts fired in the whole run, and all three
-consistently-lost cases ended `turns=12, claimed=false`, i.e. never reached
-verification. That run is effectively a third baseline sample, which is where
-the +/-5 variance figure above comes from.
+### Historical verification-gate context
 
-## Open, in rough priority order
+The completion gate still re-runs a *passing* suite
+(`VERIFY_CONFIRMATIONS = 2`) and reports `flaky: true` when the pass does not
+reproduce. A greenfield trial had produced two test files sharing one JSON file;
+`node --test` ran them in parallel, one pass was accepted, and the suite later
+failed 1 run in 6. Confirmation prevents that pass from laundering a bad change.
 
-1. **Test-isolation instruction.** The agent writes tests that share mutable
-   state. `src/instructions.ts` supports always-on entries, so this needs no
-   code. Measure it against `16-greenfield-tests` — that task exists precisely
-   because neither Polyglot nor the old local suite could score it.
-2. **Retry weakness.** The second attempt recovered 13 of 103 first-attempt
-   failures on the full run, and nothing at all in java.
-3. **Second full-225 replication**, if a two-replication gate matters for
-   publication.
-4. **Little Coder at 7B/14B is unmeasured.** "Forge beats Little Coder" is
-   established at 30B only. At 4.8% and ~13% neither is a usable agent, so a
-   42-case comparison there would be underpowered; the full 225 would be needed.
+## Open, in product-plan order
+
+1. **TypeScript/JavaScript symbol declarations and exact source locations.**
+   Build on `src/relationships.ts` without pretending regex extraction is a
+   language server.
+2. **Reference lookup and dependency-backed context selection.** Use exact
+   declarations plus bounded dependency evidence to find callers whose filenames
+   do not share task vocabulary.
+3. **Change-impact analysis and focused verification planning.** Map run-mutated
+   paths to packages, inbound dependency closure, and candidate tests while
+   preserving the authoritative full completion gate.
+4. **Failure-class-specific recovery.** Replace generic retry prompting with
+   bounded strategies for syntax, type, test, timeout, infrastructure, and
+   no-progress failures.
+5. **Execution-backend interface and optional Docker/Podman isolation.** Current
+   worktrees isolate repository mutations only; commands still run on the host.
+6. **Versioned server/event contract**, followed by IDE clients, MCP, and a small
+   permissioned extension API.
+7. **Benchmark follow-up.** The second full-225 replication and current Little
+   Coder comparison remain useful, but no new product slice should claim a score
+   gain without paired evidence.
 
 ## Constraints
 
@@ -94,14 +112,17 @@ the +/-5 variance figure above comes from.
   Docs are always safe. Run `npm run build` after any source change.
 - **One benchmark suite per GPU.** Runs are GPU-bound (A40 at 100% while the
   host sat at 5/11 cores). Sharing inflates timeouts, and timeouts score as
-  failures — contention manufactures bad results.
+  failures — contention manufactures bad results. The local-dev bridge currently
+  denies `pgrep`, so process checks must use an allowed repository command or be
+  reported as unavailable; do not bypass the bridge.
 - Changing a run's endpoint fails with "Polyglot run identity differs". Correct
   guard; use a new name or delete the stale directory.
 - Benchmark output lives under `.forge/`, which `.gitignore` excludes. Distil
   into `bench/*.md` or it is lost.
 - Local ports 8791/8792 hold long-lived `/tmp/fakemodel*.mjs` stubs answering
   `{"model":"scripted"}`. **Assert the model id after opening any tunnel.**
-- The only unrelated worktree item is `../uv.lock`; do not add or modify it.
+- The only unrelated worktree item is the untracked repository-root `uv.lock`;
+  do not add or modify it.
 
 ## Infrastructure
 

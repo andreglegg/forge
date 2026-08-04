@@ -270,6 +270,13 @@ export const TOOLS: readonly ToolSpec[] = [
     textForm: "SEARCH <query>",
   },
   {
+    name: "related",
+    mutates: false,
+    schema: z.strictObject({ path: path_ }),
+    describe: (a) => `inspect relationships for ${String(a["path"])}`,
+    textForm: "RELATED <path>",
+  },
+  {
     name: "delete",
     mutates: true,
     schema: z.strictObject({ path: path_ }),
@@ -353,7 +360,6 @@ export function textProtocolPrompt(): string {
     "Reply in plain text. Use these directives, one per line:",
     "",
     ...TOOLS.filter((tool) => tool.textForm !== undefined).map((tool) => `  ${tool.textForm}`),
-    "",
     "To change a file, write an edit block:",
     "",
     "  EDIT path/to/file.ts",
@@ -364,7 +370,8 @@ export function textProtocolPrompt(): string {
     "  >>>>>>> REPLACE",
     "",
     "CREATE uses an empty SEARCH; READ path:start-end returns an exact bounded excerpt.",
-    "LIST is one directory; GLOB/GREP search all indexed paths; DELETE never targets the root; MOVE/COPY/RENAME require an absent destination.",
+    "LIST is one directory; GLOB/GREP search all indexed paths; RELATED shows imports, dependents, and tests.",
+    "DELETE never targets the root; MOVE/COPY/RENAME require an absent destination.",
     // Reverted from a longer version. Adding eight lines about marker
     // collisions and anchor sizing made things measurably WORSE: the task it
     // targeted went from 2/3 to 0/3 and false successes rose from 1 to 6
@@ -373,7 +380,6 @@ export function textProtocolPrompt(): string {
     // caveats costs more than the edge case the caveats addressed.
     "The SEARCH text must appear exactly once. Quote the smallest text that",
     "does; add surrounding lines only if a shorter anchor would be ambiguous.",
-    "",
     "When the task is done, write:  DONE <one line summary>",
   ];
   return lines.join("\n");

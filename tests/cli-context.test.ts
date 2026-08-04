@@ -36,6 +36,45 @@ describe("task context import following", () => {
     }
   });
 
+  test("follows export, require, dynamic, index, and TypeScript .js-specifier dependencies", async () => {
+    const dir = realpathSync(await mkdtemp(path.join(tmpdir(), "context-relationships-")));
+    try {
+      mkdirSync(path.join(dir, "src", "types"), { recursive: true });
+      writeFileSync(
+        path.join(dir, "src", "service.ts"),
+        [
+          'export { config } from "./config.js";',
+          'export type { Request } from "./types";',
+          'const legacy = require("./legacy");',
+          'export const lazy = () => import("./lazy");',
+          "export const SERVICE_SENTINEL = legacy;",
+          "",
+        ].join("\n"),
+      );
+      writeFileSync(path.join(dir, "src", "config.ts"), "export const config = 1;\n");
+      writeFileSync(path.join(dir, "src", "types", "index.ts"), "export type Request = {};\n");
+      writeFileSync(path.join(dir, "src", "legacy.js"), "module.exports = 2;\n");
+      writeFileSync(path.join(dir, "src", "lazy.ts"), "export default 3;\n");
+
+      const result = taskContext(new Workspace(dir), "fix the service", 24_000);
+      const followed = result.receipt.items
+        .filter((item) => item.reason === "imported by src/service.ts")
+        .map((item) => item.path)
+        .sort();
+
+      expect(followed).toEqual([
+        "src/config.ts",
+        "src/lazy.ts",
+        "src/legacy.js",
+        "src/types/index.ts",
+      ]);
+      expect(result.text).toContain("export const config = 1;");
+      expect(result.text).toContain("export type Request = {};");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("finds and inlines a named file beyond the old depth and 200-file limits", async () => {
     const dir = realpathSync(await mkdtemp(path.join(tmpdir(), "context-large-project-")));
     try {

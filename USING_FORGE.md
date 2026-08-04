@@ -125,21 +125,28 @@ LIST packages/api
 GLOB **/*.test.ts
 GREP RequestHandler
 SEARCH exact literal text
+RELATED packages/api/src/server.ts
 READ packages/api/src/server.ts:120-220
 ```
 
 `LIST` is one directory level. Glob and search operate over paths at any depth.
-Ranged reads make large source files usable without flooding the model context.
-Ordinary context excludes dependency/build/cache directories, common credential
+`RELATED` reports a TypeScript/JavaScript file's nearest package root, direct
+relative dependencies, inbound dependents, and nearby tests. Ranged reads make
+large source files usable without flooding the model context. Ordinary context
+also follows one dependency hop through the same resolver. It excludes
+dependency/build/cache directories, common credential
 files, `.docs`, and `.meta`; hidden exercise instructions remain opt-in through
 `--task-packet`.
 
 The current safety bounds are 50,000 indexed entries, 2 MiB per searched file,
 200 regex GREP matches, 100 literal SEARCH matches, and 16,000 characters per
 read action. Ranged, clipped, and failed reads do not authorize whole-file
-replacement; large files require anchored edits. These are large-project
-navigation limits, not a promise that Forge has a semantic symbol index or
-language server yet.
+replacement; large files require anchored edits. Relationship scans consider at
+most 10,000 supported TypeScript/JavaScript files and 512 KiB per file. They
+resolve relative imports, export-from declarations, `require`, string-literal
+dynamic imports, common source extensions, TypeScript `.js` specifiers, and
+directory indexes. Package imports, path aliases, package exports, exact symbols,
+and language-server references remain planned.
 
 ## 4. What it is good at
 

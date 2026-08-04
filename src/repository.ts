@@ -535,7 +535,7 @@ export function projectMap(index: RepositoryIndex, maxChars = 8_000): string {
     ...(important.length > 0
       ? ["Important project files:", ...important.map((entry) => `  ${entry}`)]
       : []),
-    "Use LIST for one directory, GLOB to locate paths, GREP/SEARCH across the full repository, and READ path:start-end for large files.",
+    "Use LIST/GLOB/GREP/SEARCH to navigate, RELATED for local module relationships, and READ path:start-end for large files.",
   ];
   let output = "";
   for (const line of lines) {
