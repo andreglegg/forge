@@ -24,9 +24,10 @@
  */
 
 import { spawn } from "node:child_process";
-import { closeSync, mkdtempSync, openSync, readFileSync, rmSync } from "node:fs";
+import { closeSync, mkdtempSync, openSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { resolveInside } from "./workspace.js";
 
 export interface ExecResult {
   readonly code: number | null;
@@ -49,6 +50,77 @@ export interface ExecOptions {
    * comment is.
    */
   readonly extraEnv?: Record<string, string> | undefined;
+}
+
+export type ResolvedCommandInvocation =
+  | {
+      readonly ok: true;
+      readonly command: readonly string[];
+      readonly cwd: string;
+      readonly notice: string | null;
+    }
+  | { readonly ok: false; readonly output: string };
+
+const SHELL_CONTROL_TOKEN = /^(?:&&|\|\||[|;<>]|\d*[<>].*)$/;
+
+/**
+ * Convert the one shell-shaped command local models emit most often into a
+ * shell-free invocation.
+ *
+ * `RUN cd build && make` is not dangerous in Forge -- every token is passed to
+ * `spawn` with `shell: false` -- but without this adapter it tries to launch an
+ * executable named `cd`. Small models then spend their remaining turns trying
+ * dozens or hundreds of alternative command spellings. Recognising exactly one
+ * leading `cd <dir> &&` keeps the security invariant while matching the model's
+ * natural interface. Anything more shell-like is rejected rather than guessed.
+ */
+export function resolveCommandInvocation(
+  command: readonly string[],
+  workspaceRoot: string,
+): ResolvedCommandInvocation {
+  if (command.length === 0) return { ok: false, output: "run needs a command" };
+
+  let executable = command;
+  let cwd = workspaceRoot;
+  let notice: string | null = null;
+  if (command[0] === "cd") {
+    if (command.length < 4 || command[2] !== "&&") {
+      return {
+        ok: false,
+        output: "RUN does not use a shell. Use exactly: RUN cd <directory> && <one command>.",
+      };
+    }
+    const requested = command[1];
+    if (requested === undefined) {
+      return { ok: false, output: "RUN cd needs a repository-relative directory" };
+    }
+    const resolved = resolveInside(workspaceRoot, requested);
+    if (resolved === null) {
+      return { ok: false, output: "run working directory is outside the repository" };
+    }
+    try {
+      if (!statSync(resolved).isDirectory()) {
+        return { ok: false, output: `${requested} is not a directory` };
+      }
+    } catch {
+      return { ok: false, output: `${requested} is not an existing directory` };
+    }
+    executable = command.slice(3);
+    cwd = resolved;
+    notice = `used repository working directory ${path.relative(workspaceRoot, resolved) || "."}`;
+  }
+
+  if (executable.length === 0) {
+    return { ok: false, output: "RUN needs one command after the working directory" };
+  }
+  if (executable.some((token) => SHELL_CONTROL_TOKEN.test(token))) {
+    return {
+      ok: false,
+      output:
+        "RUN executes one command without a shell; chains, pipes, redirects, and multiple && commands are unsupported.",
+    };
+  }
+  return { ok: true, command: executable, cwd, notice };
 }
 
 /**

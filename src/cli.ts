@@ -41,7 +41,7 @@ import {
   loadPolyglotReport,
 } from "./compare.js";
 import { type ContextItem, type ContextReceipt, compile, scoreFiles } from "./context.js";
-import { execBounded } from "./exec.js";
+import { execBounded, resolveCommandInvocation } from "./exec.js";
 import { projectInstructionItems } from "./instructions.js";
 import { streamNative } from "./native.js";
 import { load as loadObject, store as storeObject } from "./objects.js";
@@ -618,18 +618,21 @@ function makeTools(workspace: Workspace, signal?: AbortSignal) {
           if (!Array.isArray(command) || command.some((t) => typeof t !== "string")) {
             return { ok: false, output: "run needs a token array, e.g. RUN npm test" };
           }
-          const result = await execBounded(command as string[], {
-            cwd: workspace.root,
+          const invocation = resolveCommandInvocation(command as string[], workspace.root);
+          if (!invocation.ok) return { ok: false, output: invocation.output };
+          const result = await execBounded(invocation.command, {
+            cwd: invocation.cwd,
             signal,
           });
+          const prefix = invocation.notice === null ? "" : `${invocation.notice}\n`;
           if (result.timedOut) {
             return {
               ok: false,
-              output: `timed out after ${result.seconds.toFixed(0)}s\n${result.output}`,
+              output: `${prefix}timed out after ${result.seconds.toFixed(0)}s\n${result.output}`,
             };
           }
           const status = result.code === 0 ? "exit 0" : `exit ${result.code}`;
-          return { ok: result.code === 0, output: `${status}\n${result.output}` };
+          return { ok: result.code === 0, output: `${prefix}${status}\n${result.output}` };
         }
         return {
           ok: false,
