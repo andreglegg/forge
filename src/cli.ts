@@ -15,6 +15,8 @@
 import {
   appendFileSync,
   existsSync,
+  lstatSync,
+  mkdirSync,
   readdirSync,
   readFileSync,
   rmSync,
@@ -359,6 +361,16 @@ function globMatches(pattern: string, candidate: string): boolean {
 
 function escapeRegExp(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** Like POSIX lexists: true for files, directories, and broken symlinks. */
+function entryExists(target: string): boolean {
+  try {
+    lstatSync(target);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** Files small enough that showing one is cheaper than a round trip to read it. */
@@ -747,8 +759,8 @@ async function oneTurn(
   const bounded = boundTurnIntent(
     turn,
     batchActions
-      ? { proposals: 12, runs: 3, mutations: 2 }
-      : { proposals: 8, runs: 2, mutations: 1 },
+      ? { proposals: 12, runs: 3, mutations: 2, deletes: 8 }
+      : { proposals: 8, runs: 2, mutations: 1, deletes: 4 },
   );
   turn = bounded.turn;
 
@@ -782,7 +794,8 @@ async function oneTurn(
     stalled: outcome.stalled === true,
     guardNotice: bounded.notice,
     committedMutation: outcome.results.some(
-      (result) => result.ok && result.output.startsWith("applied "),
+      (result) =>
+        result.ok && (result.output.startsWith("applied ") || result.output.startsWith("deleted ")),
     ),
     ranCommand: turn.proposals.some(
       (proposal) => proposal.kind === "call" && proposal.tool === "run",
@@ -1325,7 +1338,11 @@ export async function main(argv: readonly string[], io: IO = consoleIO): Promise
         skipped += 1;
         continue;
       }
-      if (revisionOf(target) !== event.afterRevision) {
+      if (
+        event.afterRevision === null
+          ? entryExists(target)
+          : revisionOf(target) !== event.afterRevision
+      ) {
         io.err(`  ✗ ${event.path} changed since this session; left untouched`);
         skipped += 1;
         continue;
@@ -1350,6 +1367,7 @@ export async function main(argv: readonly string[], io: IO = consoleIO): Promise
         skipped += 1;
         continue;
       }
+      mkdirSync(path.dirname(target), { recursive: true });
       writeFileSync(target, content, "utf8");
       io.out(`  ✓ restored ${event.path}`);
       restored += 1;
@@ -2213,10 +2231,17 @@ async function reviewChanges(
   }
   const shown = changed
     .map((file) => {
+      const target = resolveInside(workspace.root, file);
+      if (target === null) {
+        return `${file} \u2014 the path can no longer be resolved safely; deletion is not confirmed`;
+      }
+      if (!entryExists(target)) {
+        return `${file} \u2014 deleted; the path no longer exists`;
+      }
       try {
         return `${file} \u2014 as it now stands on disk:\n${workspace.read(file)}`;
       } catch {
-        return `${file} \u2014 could not be read back`;
+        return `${file} \u2014 exists but could not be read back`;
       }
     })
     .join("\n\n");

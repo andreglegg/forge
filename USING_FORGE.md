@@ -85,9 +85,10 @@ missed), `/verify` (the verification command it detected), `/replay`,
 `/approvals`.
 
 At an approval prompt: enter or `a` applies, `always` approves that kind for the
-session, anything else skips. `plan` and `read-only` are capability restrictions
-inside the Run actor: `--yes`, native tool calls, and malformed model output
-cannot bypass them.
+session, anything else skips. Edits, file deletions, and commands are separate
+approval classes. `plan` and `read-only` are capability restrictions inside the
+Run actor: `--yes`, native tool calls, and malformed model output cannot bypass
+them.
 
 For automation, `--json` writes one final document. `--stream-json` writes one
 JSON object per durable Run event and ends with a `{"type":"result",...}` record.
@@ -140,13 +141,17 @@ deciding *what* to build. Do not assume it transfers.
 2. **Set `verify` in `forge.json`.** A run with no verification command reports
    that it could not verify rather than pretending — but you get far more from
    a real command.
-3. **Do not enable unfamiliar hooks.** Forge never auto-runs configured hooks;
+3. **Review deletion previews carefully.** `DELETE <path>` removes one regular
+   file after showing the full removal diff and revalidating its revision. Forge
+   never recursively deletes directories or final-component symlinks. Deleted
+   content is retained for guarded `forge undo`.
+4. **Do not enable unfamiliar hooks.** Forge never auto-runs configured hooks;
    `--hooks` is your explicit consent to execute those repository commands.
-4. **Read the diff.** Its self-report is not evidence. The one measured failure
+5. **Read the diff.** Its self-report is not evidence. The one measured failure
    mode that matters is a confident wrong finish, and the defence is your eyes.
-5. **Prefer many small tasks to one large one.** The 14/14 tasks are all
+6. **Prefer many small tasks to one large one.** The 14/14 tasks are all
    single-purpose. Nothing suggests a 10-step request behaves as well.
-6. **Re-run your tests yourself after it finishes.** Since 2026-08-04 the
+7. **Re-run your tests yourself after it finishes.** Since 2026-08-04 the
    completion gate re-runs a passing suite to confirm it (`bench/PROJECT_TRIAL.md`),
    but your suite is yours.
 

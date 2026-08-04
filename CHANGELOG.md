@@ -22,6 +22,7 @@ All notable product changes are recorded here. Forge follows semantic versioning
 - `--promote` for verified, conflict-checked patch application back to the original clean checkout.
 - Promotion-time patch risk scanning with an explicit `--allow-risk` override for reviewed critical findings.
 - Explicit bounded headless lifecycle hooks for session start, verification boundaries, and session end.
+- Revision-guarded `DELETE <path>` support in text and native protocols, including removal previews, separate approvals, bounded multi-file deletion, absence-aware verification, and safe undo.
 
 ### Reliability baseline
 

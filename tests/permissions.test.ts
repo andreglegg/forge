@@ -58,6 +58,42 @@ describe("runtime capability policy", () => {
     });
   });
 
+  test("refuses file deletion before preview even with automatic approval enabled", async () => {
+    await withRepo(async (root) => {
+      const file = path.join(root, "obsolete.ts");
+      writeFileSync(file, "export const obsolete = true;\n");
+      let called = false;
+      const run = new Run(
+        {
+          workspace: new Workspace(root),
+          runTool: async () => {
+            called = true;
+            return { ok: true, output: "should not run" };
+          },
+          authorize: () => "read-only mode forbids edits and command execution",
+        },
+        true,
+      );
+      const drained = (async () => {
+        for await (const _event of run.events()) {
+          // drain
+        }
+      })();
+
+      run.start("remove obsolete file");
+      const outcome = await run.submit(decode("DELETE obsolete.ts\n"));
+      run.close();
+      await drained;
+
+      expect(called).toBe(false);
+      expect(readFileSync(file, "utf8")).toContain("obsolete");
+      expect(outcome.results[0]).toMatchObject({
+        ok: false,
+        output: expect.stringMatching(/read-only mode/i),
+      });
+    });
+  });
+
   test("refuses command execution without calling the command effect", async () => {
     await withRepo(async (root) => {
       let called = false;

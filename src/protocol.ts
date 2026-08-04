@@ -124,12 +124,18 @@ export interface BoundedTurn {
  */
 export function boundTurnIntent(
   turn: TurnIntent,
-  limits: { readonly proposals: number; readonly runs: number; readonly mutations: number },
+  limits: {
+    readonly proposals: number;
+    readonly runs: number;
+    readonly mutations: number;
+    readonly deletes?: number;
+  },
 ): BoundedTurn {
   const accepted: ActionProposal[] = [];
   const seen = new Set<string>();
   let runs = 0;
   let mutations = 0;
+  let deletions = 0;
   let duplicates = 0;
   let dropped = 0;
   for (const proposal of turn.proposals) {
@@ -142,10 +148,12 @@ export function boundTurnIntent(
     seen.add(key);
     const isRun = proposal.kind === "call" && proposal.tool === "run";
     const isMutation = proposal.kind === "edit";
+    const isDelete = proposal.kind === "call" && proposal.tool === "delete";
     if (
       accepted.length >= limits.proposals ||
       (isRun && runs >= limits.runs) ||
-      (isMutation && mutations >= limits.mutations)
+      (isMutation && mutations >= limits.mutations) ||
+      (isDelete && deletions >= (limits.deletes ?? limits.mutations))
     ) {
       dropped += 1;
       continue;
@@ -153,6 +161,7 @@ export function boundTurnIntent(
     accepted.push(proposal);
     if (isRun) runs += 1;
     if (isMutation) mutations += 1;
+    if (isDelete) deletions += 1;
   }
   if (dropped === 0) return { turn, dropped: 0, duplicates: 0, notice: null };
 
@@ -245,6 +254,13 @@ export const TOOLS: readonly ToolSpec[] = [
     textForm: "SEARCH <query>",
   },
   {
+    name: "delete",
+    mutates: true,
+    schema: z.strictObject({ path: path_ }),
+    describe: (a) => `delete ${String(a["path"])}`,
+    textForm: "DELETE <path>",
+  },
+  {
     name: "run",
     mutates: true,
     // A token array, never a shell string: nothing model-written reaches a
@@ -304,6 +320,7 @@ export function textProtocolPrompt(): string {
     "  >>>>>>> REPLACE",
     "",
     "To create a file, use CREATE instead of EDIT and leave the SEARCH side empty.",
+    "DELETE removes one regular file. It never removes a directory.",
     // Reverted from a longer version. Adding eight lines about marker
     // collisions and anchor sizing made things measurably WORSE: the task it
     // targeted went from 2/3 to 0/3 and false successes rose from 1 to 6

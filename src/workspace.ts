@@ -24,11 +24,13 @@
 import { createHash, randomUUID } from "node:crypto";
 import {
   existsSync,
+  lstatSync,
   mkdirSync,
   readFileSync,
   realpathSync,
   renameSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import path from "node:path";
@@ -126,10 +128,11 @@ export interface Hunk {
 }
 
 export interface Preview {
+  readonly kind: "edit" | "delete";
   readonly path: string;
   readonly create: boolean;
   readonly baseRevision: string | null;
-  readonly afterRevision: string;
+  readonly afterRevision: string | null;
   readonly before: string;
   readonly after: string;
   readonly hunks: Hunk[];
@@ -209,6 +212,7 @@ export class Workspace {
     }
     const hunks = diffLines(before, after);
     return {
+      kind: "edit",
       path: proposal.path,
       create: proposal.create,
       // Hash the bytes already read rather than opening the file again. A
@@ -225,7 +229,47 @@ export class Workspace {
   }
 
   /**
-   * Apply a previewed edit, refusing if the file moved underneath it.
+   * Preview deletion of one regular file. Directories and final-component
+   * symlinks are deliberately excluded: recursive removal is too broad for a
+   * one-line model directive, and deleting through a symlink can target a file
+   * other than the path the user approved.
+   */
+  previewDelete(relative: string): Preview {
+    const target = resolveInside(this.root, relative);
+    if (target === null) {
+      throw new WorkspaceError(`${relative} is outside the workspace`);
+    }
+    const lexical = path.resolve(this.root, relative.replaceAll("\\", "/"));
+    if (!existsSync(lexical)) {
+      throw new WorkspaceError(`${relative} does not exist`);
+    }
+    if (lstatSync(lexical).isSymbolicLink()) {
+      throw new WorkspaceError(`${relative} is a symbolic link; Forge deletes regular files only`);
+    }
+    if (!statSync(target).isFile()) {
+      throw new WorkspaceError(
+        `${relative} is not a regular file; Forge does not delete directories`,
+      );
+    }
+    const beforeBytes = readFileSync(target);
+    const before = beforeBytes.toString("utf8");
+    const hunks = diffLines(before, "");
+    return {
+      kind: "delete",
+      path: relative,
+      create: false,
+      baseRevision: revisionOfBytes(beforeBytes),
+      afterRevision: null,
+      before,
+      after: "",
+      hunks,
+      added: 0,
+      removed: hunks.filter((h) => h.kind === "remove").length,
+    };
+  }
+
+  /**
+   * Apply a previewed mutation, refusing if the file moved underneath it.
    *
    * The write is temp-file-then-rename, which is the same POSIX `rename(2)`
    * the rest of the world relies on: a crash mid-write leaves the previous
@@ -238,9 +282,26 @@ export class Workspace {
     }
     const current = revisionOf(target);
     if (current !== preview.baseRevision) {
+      const mutation = preview.kind === "delete" ? "deletion" : "edit";
       throw new WorkspaceError(
-        `${preview.path} changed after it was approved, so the edit was not applied. Read it again.`,
+        `${preview.path} changed after it was approved, so the ${mutation} was not applied. Read it again.`,
       );
+    }
+    if (preview.kind === "delete") {
+      if (!existsSync(target) || !statSync(target).isFile()) {
+        throw new WorkspaceError(
+          `${preview.path} changed after it was approved, so the deletion was not applied. Read it again.`,
+        );
+      }
+      // Re-check immediately before removal. This mirrors the edit path's
+      // second revision check immediately before its atomic rename.
+      if (revisionOf(target) !== preview.baseRevision) {
+        throw new WorkspaceError(
+          `${preview.path} changed after it was approved, so the deletion was not applied. Read it again.`,
+        );
+      }
+      rmSync(target);
+      return;
     }
     mkdirSync(path.dirname(target), { recursive: true });
     const temporary = `${target}.forge-tmp-${randomUUID()}`;

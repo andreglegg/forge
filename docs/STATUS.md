@@ -9,7 +9,7 @@ This table describes the executable TypeScript product in `src/`.
 | OpenAI-compatible providers | Shipped | Model discovery plus a minimal completion preflight that catches inactive runtime profiles before coding begins. |
 | Native OpenAI/Anthropic tools | Shipped | Optional `--native`; normalized into the same action protocol. |
 | Repository reads/search/grep | Shipped | Canonical-root containment and bounded output. |
-| Anchored edits | Shipped | Preview, approval, revision revalidation, commit. |
+| Anchored edits and file deletion | Shipped | Edits and `DELETE <path>` are previewed before approval, revalidated against the approved revision, journalled, and undoable. Deletion is limited to individual regular files; directories and symlinks are refused. |
 | Command execution | Shipped | Token arrays, no shell, reduced environment, timeout and process-group termination. |
 | Verification gate | Shipped | Detected/configured commands and confirmation of a passing suite. |
 | Sessions/show/undo | Shipped | Crash-tolerant repository-local journals and revision-guarded undo. |

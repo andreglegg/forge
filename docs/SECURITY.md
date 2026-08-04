@@ -15,9 +15,11 @@ Repository files, user instructions, generated model output, tool output, depend
 
 ### Mutations
 
-- The model proposes an anchored replacement; Forge previews the exact result before approval.
-- Approval is scoped by action class. Approving an edit does not approve command execution.
-- Mutation events record before/after revisions and retained content for guarded undo.
+- The model proposes an anchored replacement or an explicit `DELETE <path>` directive; Forge previews the exact resulting diff before approval.
+- File deletion is restricted to one regular file per directive. Directories, recursive deletion, and final-component symlinks are refused.
+- Approval is scoped by action class. Approving an edit, deletion, or command does not approve the other classes.
+- Immediately before commit, Forge rechecks the exact file revision that was previewed. A concurrent save makes the approved mutation stale and it is refused.
+- Mutation events record before/after revisions and retain replaced or deleted content for guarded undo. Undo restores a deleted file only while its path remains absent.
 - A final claim in a turn whose mutations failed is rejected.
 
 ### Commands

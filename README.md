@@ -29,7 +29,8 @@ The npm package is currently a **0.1 public alpha**. See [`docs/STATUS.md`](docs
 ## Status
 
 `forge` on PATH runs this. It supports read-only and plan modes, edits through
-anchored search/replace, runs approved commands, verifies completion, and asks
+anchored search/replace, deletes individual files through revision-guarded
+preview and approval, runs approved commands, verifies completion, and asks
 before workspace effects unless explicitly automated. Driven end to end against
 local Qwen coder models.
 
@@ -275,6 +276,21 @@ Prefer the smallest ownership change. Re-run the narrow failing test first.
 
 At most two keyword-matched packs are included. Add one only after retained
 failures show a repeated, general error class, then rerun the same paired screen.
+
+## File deletion
+
+The text protocol and native tool surface both support:
+
+```text
+DELETE path/to/obsolete-file.ts
+```
+
+Forge previews the whole file as removed, asks for a deletion-specific approval,
+and rechecks the file revision immediately before removal. It deletes regular
+files only—never directories or final-component symlinks. Several explicit file
+deletions can be handled in one bounded model turn, while ordinary edit limits
+remain unchanged. Deleted content is retained for `forge undo`, which restores
+it only if the path has not been recreated since the session.
 
 ## The shape
 

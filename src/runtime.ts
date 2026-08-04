@@ -54,17 +54,17 @@ export type RunEvent =
       added: number;
       removed: number;
       /**
-       * sha256 of the content this edit replaced, or null for a creation.
+       * sha256 of the content this mutation replaced, or null for a creation.
        * The bytes live in the object store; this is what undo restores from,
        * and it is the same hash the stale-proposal check already needed.
        */
       beforeRevision: string | null;
       /**
-       * sha256 of the content this edit committed. Optional only so journals
-       * written by older forge versions remain readable; unsafe legacy undo is
-       * refused by the CLI.
+       * sha256 of the content this mutation committed, or null when it deleted
+       * the file. Optional only so journals written by older Forge versions
+       * remain readable; unsafe legacy undo is refused by the CLI.
        */
-      afterRevision?: string;
+      afterRevision?: string | null;
     }
   | { type: "run.finished"; seq: number; ok: boolean; summary: string }
   | { type: "run.reopened"; seq: number; reason: string }
@@ -340,10 +340,10 @@ export interface Effects {
    * Returning a reason refuses the action even when auto-approval is enabled.
    */
   readonly authorize?: (proposal: ActionProposal) => string | null;
-  /** Executes a non-edit tool call. Returns output for the model. */
+  /** Executes a tool call that has no workspace preview/commit implementation. */
   readonly runTool: (proposal: ActionProposal) => Promise<{ ok: boolean; output: string }>;
   /**
-   * Keeps the bytes an edit replaced and returns their hash, so the change can
+   * Keeps the bytes a mutation replaced and returns their hash, so the change can
    * be undone later. Optional: a caller that does not want an undo history --
    * a test, an ephemeral sandbox -- simply does not supply it, and the events
    * record `null` rather than a hash pointing at nothing.
@@ -640,12 +640,15 @@ export class Run {
       }
 
       let preview: Preview | null = null;
-      if (proposal.kind === "edit") {
+      if (proposal.kind === "edit" || (proposal.kind === "call" && proposal.tool === "delete")) {
         try {
-          preview = this.effects.workspace.preview(proposal);
+          preview =
+            proposal.kind === "edit"
+              ? this.effects.workspace.preview(proposal)
+              : this.effects.workspace.previewDelete(String(proposal.arguments["path"] ?? ""));
         } catch (error) {
-          // A proposal that cannot be previewed cannot be approved. The reason
-          // goes back to the model, which is how it fixes the anchor.
+          // A mutation that cannot be previewed cannot be approved. The reason
+          // goes back to the model, which is how it corrects the target.
           this.guard.recordFailure(proposal);
           failedThisTurn = true;
           this.report(results, {
@@ -670,7 +673,7 @@ export class Run {
       }
 
       this.emit({ type: "action.started", id, summary });
-      if (proposal.kind === "edit" && preview !== null) {
+      if (preview !== null) {
         try {
           this.effects.workspace.commit(preview);
         } catch (error) {
@@ -697,14 +700,16 @@ export class Run {
           beforeRevision: preview.create ? null : beforeRevision,
           afterRevision: preview.afterRevision,
         });
-        // Hand back the resulting file, not just "applied". Without it the
-        // model cannot tell whether its edit landed, so it edits again --
-        // observed live against qwen3-coder-30b, which appended the same
-        // function four times because every observation said only "applied".
+        // Hand back an authoritative postcondition. For edits that is the
+        // resulting file; for deletion it is explicit absence. Without this,
+        // weak models repeat a mutation because they cannot tell that it landed.
         this.report(results, {
           id,
           ok: true,
-          output: `applied ${preview.path}. It now contains:\n\n${clip(preview.after)}`,
+          output:
+            preview.kind === "delete"
+              ? `deleted ${preview.path}. The file no longer exists.`
+              : `applied ${preview.path}. It now contains:\n\n${clip(preview.after)}`,
         });
         continue;
       }
@@ -793,7 +798,12 @@ export class Run {
     if (!mutates(proposal)) {
       return "once";
     }
-    const klass = proposal.kind === "edit" ? "edit" : `run:${proposal.tool}`;
+    const klass =
+      proposal.kind === "edit"
+        ? "edit"
+        : proposal.tool === "delete"
+          ? "delete"
+          : `run:${proposal.tool}`;
     if (this.autoApprove || this.policy.allows(klass)) {
       return "once";
     }

@@ -28,13 +28,13 @@ Durable decisions are appended to a journal. Token deltas are presentation-only 
 
 `src/protocol.ts` defines one semantic tool registry. The text codec and native provider codec both decode into `ActionProposal` values. Actions are bounded before execution so a malformed model turn cannot schedule unbounded effects.
 
-Reads, listing, search, grep, anchored replacement, and command execution all operate inside one canonical `Workspace`. Edits follow:
+Reads, listing, search, grep, anchored replacement, individual-file deletion, and command execution all operate inside one canonical `Workspace`. File mutations follow:
 
 ```text
 propose -> preview in memory -> approve -> revalidate revision -> commit
 ```
 
-Approval therefore applies to a specific file revision and diff, not merely to a pathname.
+An edit preview contains the resulting file; a deletion preview contains the full removal diff. Approval therefore applies to a specific file revision and diff, not merely to a pathname. Deletions retain the removed bytes in the object store and journal `afterRevision: null`, allowing guarded undo while the path remains absent.
 
 ## Repository context
 
