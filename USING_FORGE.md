@@ -48,9 +48,20 @@ override. Explicit CLI flags and `FORGE_URL` / `FORGE_MODEL` win over profiles.
 Legacy top-level `url` and `model` keys remain supported below profiles in the
 precedence order.
 
-`verify` is worth setting explicitly. Forge auto-detects a test command, but
-naming it removes the guess — and the verifier is what stops a confident wrong
-finish.
+`verify` is worth setting explicitly. Forge auto-detects npm, pnpm, Yarn, Bun,
+Python, Rust, and Go root checks; for JavaScript projects it prefers a root
+`check` script and falls back to `test`. Naming the commands still removes the
+guess — and the verifier is what stops a confident wrong finish. Monorepo checks
+can safely select a package without a shell:
+
+```json
+{
+  "verify": [
+    ["cd", "packages/api", "&&", "pnpm", "test"],
+    ["cd", "apps/web", "&&", "pnpm", "check"]
+  ]
+}
+```
 
 **Model size matters more than anything else you will configure.** Measured on
 the pinned 42-case screen: 7B **4.8%**, 14B **11.9-14.3%**, 30B-MoE
@@ -102,7 +113,35 @@ and a 60-second timeout. Failures block the run or final exit and appear in JSON
 results. Inspect hook commands before enabling them; they can execute arbitrary
 repository-controlled programs.
 
-## 3. What it is good at
+## 3. How Forge sees a real project
+
+Forge indexes the complete bounded repository instead of stopping at a shallow
+200-file listing. Git repositories use tracked plus non-ignored untracked paths;
+non-Git directories use a bounded recursive walk. The task starts with a compact
+map of top-level areas and important manifests, then the model can navigate with:
+
+```text
+LIST packages/api
+GLOB **/*.test.ts
+GREP RequestHandler
+SEARCH exact literal text
+READ packages/api/src/server.ts:120-220
+```
+
+`LIST` is one directory level. Glob and search operate over paths at any depth.
+Ranged reads make large source files usable without flooding the model context.
+Ordinary context excludes dependency/build/cache directories, common credential
+files, `.docs`, and `.meta`; hidden exercise instructions remain opt-in through
+`--task-packet`.
+
+The current safety bounds are 50,000 indexed entries, 2 MiB per searched file,
+200 regex GREP matches, 100 literal SEARCH matches, and 16,000 characters per
+read action. Ranged, clipped, and failed reads do not authorize whole-file
+replacement; large files require anchored edits. These are large-project
+navigation limits, not a promise that Forge has a semantic symbol index or
+language server yet.
+
+## 4. What it is good at
 
 | task | evidence |
 |------|----------|
@@ -115,7 +154,7 @@ repository-controlled programs.
 This is the sweet spot: **a repo that already exists, with tests that already
 exist.** Give it a task at that scale and it is genuinely useful.
 
-## 4. What it is bad at, concretely
+## 5. What it is bad at, concretely
 
 **Greenfield projects, unsupervised.** It will build the thing — a from-scratch
 CLI project took 14 turns and 62 seconds, correct structure, working commands.
@@ -130,7 +169,7 @@ failing, against a task that said "reliably every time."
 **Anything long-horizon or architectural.** Nothing measured here requires
 deciding *what* to build. Do not assume it transfers.
 
-## 5. How to actually use it safely
+## 6. How to actually use it safely
 
 1. **Prefer `--isolate` for headless changes.** It requires the selected path
    to be the Git root and completely clean, including untracked files. The run
@@ -159,7 +198,7 @@ deciding *what* to build. Do not assume it transfers.
    completion gate re-runs a passing suite to confirm it (`bench/PROJECT_TRIAL.md`),
    but your suite is yours.
 
-## 6. A first test run
+## 7. A first test run
 
 ```sh
 cd ~/some/project
@@ -180,7 +219,7 @@ Then try interactive `forge` for something exploratory, and use `/context` when
 an answer looks like it missed a file — that shows what was in the prompt and
 what just missed the budget.
 
-## 7. Reading the numbers honestly
+## 8. Reading the numbers honestly
 
 The 42-case screen has **±5 cases of run-to-run variance** on an unchanged
 system (observed 28, 27, 23). Treat any single 42-case difference smaller than

@@ -22,7 +22,7 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { type ExecResult, execBounded } from "./exec.js";
+import { type ExecResult, execBounded, resolveCommandInvocation } from "./exec.js";
 
 /**
  * A generous default: the point of this module is to run a project's real test
@@ -137,12 +137,7 @@ export async function verify(
   for (const command of config.commands) {
     let result: ExecResult;
     try {
-      result = await execBounded(command, {
-        cwd: options.cwd,
-        timeoutSeconds,
-        maxOutputChars: CAPTURE_CHARS,
-        signal: options.signal,
-      });
+      result = await executeVerificationCommand(command, options, timeoutSeconds);
     } catch (error) {
       // A binary that is not installed (`cargo` on a machine without Rust)
       // rejects at spawn. That is a failed verification, not a crashed
@@ -209,12 +204,7 @@ async function confirm(
     for (const command of config.commands) {
       let result: ExecResult;
       try {
-        result = await execBounded(command, {
-          cwd: options.cwd,
-          timeoutSeconds,
-          maxOutputChars: CAPTURE_CHARS,
-          signal: options.signal,
-        });
+        result = await executeVerificationCommand(command, options, timeoutSeconds);
       } catch (error) {
         result = {
           code: null,
@@ -246,6 +236,23 @@ async function confirm(
  * conversation for a context window that, for the models this harness targets,
  * is small.
  */
+async function executeVerificationCommand(
+  command: readonly string[],
+  options: VerifyOptions,
+  timeoutSeconds: number,
+): Promise<ExecResult> {
+  const invocation = resolveCommandInvocation(command, options.cwd);
+  if (!invocation.ok) {
+    return { code: null, output: invocation.output, timedOut: false, seconds: 0 };
+  }
+  return await execBounded(invocation.command, {
+    cwd: invocation.cwd,
+    timeoutSeconds,
+    maxOutputChars: CAPTURE_CHARS,
+    signal: options.signal,
+  });
+}
+
 export function formatForModel(report: VerificationReport): string {
   if (!report.configured) {
     return [
@@ -325,7 +332,8 @@ export function formatForModel(report: VerificationReport): string {
  */
 export function detectCommands(root: string): string[][] {
   try {
-    if (hasNodeTestScript(root)) return [["npm", "test"]];
+    const node = nodeVerificationCommand(root);
+    if (node !== null) return [node];
     if (exists(root, "pyproject.toml") || exists(root, "pytest.ini")) {
       return [["python", "-m", "pytest", "-q"]];
     }
@@ -341,21 +349,46 @@ export function detectCommands(root: string): string[][] {
 
 /**
  * `package.json` alone proves nothing -- plenty exist only to pin a dependency
- * or set `"type": "module"`. The signal is a `test` script, because that is
- * what `npm test` will actually invoke.
+ * or set `"type": "module"`. A declared root `check` script is preferred because
+ * real projects commonly aggregate type checking, linting, and tests there;
+ * otherwise a root `test` script remains the conservative fallback.
  */
-function hasNodeTestScript(root: string): boolean {
+function nodeVerificationCommand(root: string): string[] | null {
   let parsed: unknown;
   try {
     parsed = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8"));
   } catch {
     // Missing, unreadable, or malformed all mean the same thing here.
-    return false;
+    return null;
   }
-  if (typeof parsed !== "object" || parsed === null) return false;
-  const scripts = (parsed as Record<string, unknown>)["scripts"];
-  if (typeof scripts !== "object" || scripts === null) return false;
-  return typeof (scripts as Record<string, unknown>)["test"] === "string";
+  if (typeof parsed !== "object" || parsed === null) return null;
+  const record = parsed as Record<string, unknown>;
+  const scripts = record["scripts"];
+  if (typeof scripts !== "object" || scripts === null) return null;
+  const scriptRecord = scripts as Record<string, unknown>;
+  const script =
+    typeof scriptRecord["check"] === "string"
+      ? "check"
+      : typeof scriptRecord["test"] === "string"
+        ? "test"
+        : null;
+  if (script === null) return null;
+
+  const manager = packageManager(root, record["packageManager"]);
+  if (manager === "pnpm" || manager === "yarn") return [manager, script];
+  if (manager === "bun") return ["bun", "run", script];
+  return script === "test" ? ["npm", "test"] : ["npm", "run", script];
+}
+
+function packageManager(root: string, declared: unknown): "npm" | "pnpm" | "yarn" | "bun" {
+  if (typeof declared === "string") {
+    const name = declared.split("@")[0];
+    if (name === "npm" || name === "pnpm" || name === "yarn" || name === "bun") return name;
+  }
+  if (exists(root, "pnpm-lock.yaml")) return "pnpm";
+  if (exists(root, "yarn.lock")) return "yarn";
+  if (exists(root, "bun.lock") || exists(root, "bun.lockb")) return "bun";
+  return "npm";
 }
 
 function exists(root: string, name: string): boolean {

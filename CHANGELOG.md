@@ -23,6 +23,8 @@ All notable product changes are recorded here. Forge follows semantic versioning
 - Promotion-time patch risk scanning with an explicit `--allow-risk` override for reviewed critical findings.
 - Explicit bounded headless lifecycle hooks for session start, verification boundaries, and session end.
 - Transactional `DELETE`, `MKDIR`, `MOVE`, `COPY`, and `RENAME` support in text and native protocols for files, bounded directory trees, binary content, and symlinks. Includes separate approvals, snapshot revalidation, absence-aware verification, binary-safe per-entry undo, protected metadata roots, and explicit no-overwrite semantics.
+- Project-scale repository indexing with Git ignore awareness, a compact project map, one-level `LIST`, deep `GLOB`/`GREP`/`SEARCH`, exact ranged `READ`, binary/secret filtering, and bounded non-Git fallback discovery.
+- npm, pnpm, Yarn, and Bun verification detection with root `check` preference, plus shell-free package-specific verification through validated repository working directories.
 
 ### Reliability baseline
 

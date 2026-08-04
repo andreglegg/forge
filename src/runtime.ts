@@ -23,6 +23,7 @@
 
 import type { ActionProposal } from "./protocol.js";
 import { describeProposal, mutates } from "./protocol.js";
+import { MAX_REPOSITORY_READ_CHARS } from "./repository.js";
 import type { EntryType, MutationOperation, Preview, Workspace } from "./workspace.js";
 
 // ---------------------------------------------------------------------------
@@ -401,16 +402,17 @@ function canonicalKey(proposal: ActionProposal): string {
  * step budget. Three rules, each from a measured failure mode, each *precise*
  * rather than absolute:
  *
- * - A read of a file at a revision already read is refused with advice -- but
- *   a mutation changes the revision, so re-reading after an edit is
- *   legitimate and allowed. (The first live qwen-30b run demonstrated the
- *   need: turns 4 and 5 were identical re-reads of an unchanged file.)
+ * - An exact read range at a revision already read is refused with advice --
+ *   but another range of the same large file remains legitimate, and a
+ *   mutation changes the revision. (The first live qwen-30b run demonstrated
+ *   the need: turns 4 and 5 were identical re-reads of an unchanged file.)
  * - An identical proposal repeated more than three times is refused.
  * - A proposal that failed is refused unchanged until some mutation lands,
  *   because against an unchanged repository it will fail identically.
  */
 class LoopGuard {
-  private readonly readRevisions = new Set<string>();
+  private readonly readActions = new Set<string>();
+  private readonly completeReadRevisions = new Set<string>();
   private readonly counts = new Map<string, number>();
   private readonly failed = new Set<string>();
 
@@ -428,26 +430,52 @@ class LoopGuard {
       const target = String(proposal.arguments["path"] ?? "");
       const revision = workspace.revision(target);
       if (revision !== null) {
-        const readKey = `${target}@${revision}`;
-        if (this.readRevisions.has(readKey)) {
-          return `${target} has not changed since you last read it; its contents are in the conversation above. Act on them.`;
+        const revisionKey = `${target}@${revision}`;
+        const start = proposal.arguments["start"];
+        const end = proposal.arguments["end"];
+        const rangeKey = `${typeof start === "number" ? start : ""}-${typeof end === "number" ? end : ""}`;
+        const readActionKey = `${revisionKey}:${rangeKey}`;
+        if (this.readActions.has(readActionKey)) {
+          return `${target}${rangeKey === "-" ? "" : `:${rangeKey}`} has not changed since you read that exact range; use another range or act on the contents above.`;
         }
-        this.readRevisions.add(readKey);
       }
     }
     return null;
   }
 
+  /** Record only a read the tool actually completed successfully. */
+  recordReadSuccess(proposal: ActionProposal, workspace: Workspace): void {
+    if (proposal.kind !== "call" || proposal.tool !== "read") return;
+    const target = String(proposal.arguments["path"] ?? "");
+    const revision = workspace.revision(target);
+    if (revision === null) return;
+    const revisionKey = `${target}@${revision}`;
+    const start = proposal.arguments["start"];
+    const end = proposal.arguments["end"];
+    const rangeKey = `${typeof start === "number" ? start : ""}-${typeof end === "number" ? end : ""}`;
+    this.readActions.add(`${revisionKey}:${rangeKey}`);
+    const bytes = workspace.byteSize(target);
+    if (
+      start === undefined &&
+      end === undefined &&
+      bytes !== null &&
+      bytes <= MAX_REPOSITORY_READ_CHARS
+    ) {
+      this.completeReadRevisions.add(revisionKey);
+    }
+  }
+
   /**
-   * Whether the model has read this file as it currently stands.
+   * Whether the model has read this complete file as it currently stands.
    *
    * The signal that separates a considered whole-file replacement from a blind
-   * clobber. A read recorded against an older revision does not count: the file
-   * has changed since, so what the model is replacing is not what it saw.
+   * clobber. Ranged or clipped reads do not count, and a read recorded against
+   * an older revision does not count: the model must have seen every byte it is
+   * about to replace.
    */
   hasReadCurrent(target: string, workspace: Workspace): boolean {
     const revision = workspace.revision(target);
-    return revision !== null && this.readRevisions.has(`${target}@${revision}`);
+    return revision !== null && this.completeReadRevisions.has(`${target}@${revision}`);
   }
 
   recordFailure(proposal: ActionProposal): void {
@@ -642,7 +670,7 @@ export class Run {
           this.report(results, {
             id,
             ok: false,
-            output: `${proposal.path} already exists. Read it first, then send this again to replace it wholesale -- or edit the part that changes.`,
+            output: `${proposal.path} already exists. Read the complete file first, then send this again to replace it wholesale. For a large or ranged file, use an anchored EDIT for only the part that changes.`,
           });
           failedThisTurn = true;
           continue;
@@ -759,6 +787,7 @@ export class Run {
         this.guard.recordFailure(proposal);
         failedThisTurn = true;
       } else {
+        this.guard.recordReadSuccess(proposal, this.effects.workspace);
         sawObservation = true;
       }
       this.report(results, { id, ok: result.ok, output: result.output });

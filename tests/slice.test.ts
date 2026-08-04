@@ -610,6 +610,34 @@ describe("the loop guard", () => {
     });
   });
 
+  test("allows another range of an unchanged file and refuses an exact repeated range", async () => {
+    await withRepo(async (dir) => {
+      writeFileSync(
+        path.join(dir, "large.ts"),
+        `${Array.from({ length: 20 }, (_, index) => `line ${index + 1}`).join("\n")}\n`,
+      );
+      const outcomes: boolean[] = [];
+      const run = new Run({
+        workspace: new Workspace(dir),
+        runTool: async () => ({ ok: true, output: "range" }),
+      });
+      const drained = (async () => {
+        for await (const event of run.events()) {
+          if (event.type === "action.finished") outcomes.push(event.ok);
+        }
+      })();
+
+      run.start("read the file in ranges");
+      await run.submit(decodeText("READ large.ts:1-5\n"));
+      await run.submit(decodeText("READ large.ts:6-10\n"));
+      await run.submit(decodeText("READ large.ts:1-5\n"));
+      run.close();
+      await drained;
+
+      expect(outcomes).toEqual([true, true, false]);
+    });
+  });
+
   test("a re-read after a mutation is legitimate and allowed", async () => {
     // The guard is precise, not absolute: an edit changes the revision, so
     // the model genuinely needs to see the file again.

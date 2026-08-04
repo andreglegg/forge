@@ -855,6 +855,18 @@ export class Workspace {
     return target === null ? null : revisionOf(target);
   }
 
+  /** Exact regular-file size, or null for missing, escaped, or non-file paths. */
+  byteSize(relative: string): number | null {
+    const target = resolveInside(this.root, relative);
+    if (target === null) return null;
+    try {
+      const stat = lstatSync(target);
+      return stat.isFile() && !stat.isSymbolicLink() ? stat.size : null;
+    } catch {
+      return null;
+    }
+  }
+
   read(relative: string): string {
     const target = resolveInside(this.root, relative);
     if (target === null) {

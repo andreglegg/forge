@@ -15,11 +15,8 @@
 import {
   appendFileSync,
   chmodSync,
-  existsSync,
   lstatSync,
   mkdirSync,
-  readdirSync,
-  readFileSync,
   readlinkSync,
   rmdirSync,
   rmSync,
@@ -101,6 +98,15 @@ import {
   TRACES_SUBDIRECTORY,
   traceFileFor,
 } from "./replay.js";
+import {
+  globRepository,
+  indexRepository,
+  listRepository,
+  projectMap,
+  readRepositoryText,
+  repositoryFiles,
+  searchRepository,
+} from "./repository.js";
 import { decidePromotionRisk, type PatchRisk, scanPatchRisks } from "./risk.js";
 import {
   type ActionResult,
@@ -260,41 +266,6 @@ function parseArgs(argv: readonly string[]): {
 }
 
 /**
- * A shallow listing, as the model's first sight of the repository.
- *
- * Placeholder for the context compiler: it is a flat list, unranked, bounded by
- * count rather than by tokens. Named as a gap rather than left to be discovered
- * -- retrieval quality is the largest single lever on small-model performance
- * and this is the crudest possible version of it.
- */
-function listing(root: string, limit = 200): string {
-  const skip = new Set([".git", "node_modules", "dist", ".venv", "__pycache__", ".forge"]);
-  const found: string[] = [];
-  const walk = (dir: string, depth: number): void => {
-    if (found.length >= limit || depth > 3) return;
-    let entries: string[];
-    try {
-      entries = readdirSync(dir);
-    } catch {
-      return;
-    }
-    for (const name of entries.sort()) {
-      if (skip.has(name) || name.startsWith(".")) continue;
-      const full = path.join(dir, name);
-      try {
-        const stat = lstatSync(full);
-        if (stat.isDirectory() && !stat.isSymbolicLink()) walk(full, depth + 1);
-        else if (found.length < limit) found.push(path.relative(root, full));
-      } catch {
-        // Unreadable entries are simply not listed.
-      }
-    }
-  };
-  walk(root, 0);
-  return found.join("\n");
-}
-
-/**
  * The stable half of the prompt: the protocol and the rules, and nothing that
  * depends on the task.
  *
@@ -350,32 +321,6 @@ export function systemPrompt(
           ]
         : []),
   ].join("\n");
-}
-
-// Star globs only -- enough for "*.ts" and a recursive directory prefix, which
-// is what actually gets asked for. A line comment, not a block one: a glob
-// example containing a star followed by a slash closes a block comment early,
-// which has now cost me three separate debugging sessions in one night.
-function globMatches(pattern: string, candidate: string): boolean {
-  const source = pattern
-    .split(/(\*\*\/|\*\*|\*|\?)/)
-    .map((part) => {
-      if (part === "**/") return "(?:.*/)?";
-      if (part === "**") return ".*";
-      if (part === "*") return "[^/]*";
-      if (part === "?") return "[^/]";
-      return part.replace(/[.+^${}()|[\]\\]/g, "\\$&");
-    })
-    .join("");
-  try {
-    return new RegExp(`^${source}$`).test(candidate);
-  } catch {
-    return false;
-  }
-}
-
-function escapeRegExp(text: string): string {
-  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 /** Like POSIX lexists: true for files, directories, and broken symlinks. */
@@ -471,7 +416,8 @@ export function taskContext(
   budgetChars: number,
   taskPacket = false,
 ): { text: string; receipt: ContextReceipt } {
-  const paths = listing(workspace.root).split("\n").filter(Boolean);
+  const index = indexRepository(workspace.root);
+  const paths = repositoryFiles(index);
   const ranked = scoreFiles(paths, task);
   const inlineBudget = Math.floor(budgetChars * 0.7);
   let inlined = 0;
@@ -487,21 +433,23 @@ export function taskContext(
   // immediately and this costs nothing; on a small one it hands over the whole
   // problem at once, which is the case where a small model does best.
   const nothingMatched = ranked.every((item) => item.score <= 0);
+  const smallRepositoryFallback = nothingMatched && paths.length <= 80;
 
   const items = ranked.map((item) => {
     const relative = item.path ?? item.text;
     // Only files the query matched are worth their contents -- unless nothing
     // matched at all, in which case withholding them helps no one.
-    if ((item.score <= 0 && !nothingMatched) || inlined >= inlineBudget) {
+    if ((item.score <= 0 && !smallRepositoryFallback) || inlined >= inlineBudget) {
       return item;
     }
     let contents: string;
     try {
-      contents = workspace.read(relative);
+      const read = readRepositoryText(workspace.root, relative, {
+        maxChars: INLINE_FILE_MAX_CHARS + 1,
+      });
+      if (read.truncated || read.content.length > INLINE_FILE_MAX_CHARS) return item;
+      contents = read.content;
     } catch {
-      return item;
-    }
-    if (contents.length > INLINE_FILE_MAX_CHARS) {
       return item;
     }
     inlined += contents.length;
@@ -528,11 +476,14 @@ export function taskContext(
       if (candidate === undefined || alreadyInlined.has(candidate)) continue;
       let contents: string;
       try {
-        contents = workspace.read(candidate);
+        const read = readRepositoryText(workspace.root, candidate, {
+          maxChars: INLINE_FILE_MAX_CHARS + 1,
+        });
+        if (read.truncated || read.content.length > INLINE_FILE_MAX_CHARS) continue;
+        contents = read.content;
       } catch {
         continue;
       }
-      if (contents.length > INLINE_FILE_MAX_CHARS) continue;
       alreadyInlined.add(candidate);
       followed.push({
         id: `import:${candidate}`,
@@ -553,12 +504,12 @@ export function taskContext(
   const packet = taskPacket ? taskPacketItems(workspace, task) : [];
 
   const listingItem = {
-    id: "listing",
+    id: "project-map",
     kind: "listing" as const,
-    text: `Files in ${path.basename(workspace.root)}:\n${paths.join("\n")}`,
+    text: projectMap(index, Math.min(8_000, Math.max(2_000, Math.floor(budgetChars * 0.25)))),
     mandatory: true,
     score: 0,
-    reason: "the repository is always visible",
+    reason: "bounded complete repository map",
   };
   return compile([listingItem, ...instructions, ...packet, ...items], budgetChars);
 }
@@ -607,80 +558,61 @@ function makeTools(workspace: Workspace, signal?: AbortSignal) {
       const args = proposal.arguments ?? {};
       try {
         if (proposal.tool === "read") {
-          // Verbatim, with no line-number gutter. The model has to quote an
-          // exact anchor back in a SEARCH block, and every character it must
-          // strip first is a chance to get it wrong.
-          const target = String(args["path"]);
-          // Framed as authoritative. A small model that has already guessed at
-          // a file's contents will otherwise keep trusting its guess.
+          const target = String(args["path"] ?? "");
+          const start = typeof args["start"] === "number" ? args["start"] : undefined;
+          const end = typeof args["end"] === "number" ? args["end"] : undefined;
+          const read = readRepositoryText(workspace.root, target, {
+            ...(start === undefined ? {} : { start }),
+            ...(end === undefined ? {} : { end }),
+          });
+          const range = `${read.startLine}-${read.endLine} of ${read.totalLines}`;
+          const continuation =
+            read.truncated && read.endLine < read.totalLines
+              ? `\n[read truncated; continue with READ ${read.path}:${read.endLine + 1}-${Math.min(read.totalLines, read.endLine + 200)}]`
+              : "";
           return {
             ok: true,
-            output: `${target} — exact contents, quote from this and nothing else:\n${workspace.read(target)}`,
+            output: `${read.path} — exact lines ${range}, quote from this and nothing else:\n${read.content}${continuation}`,
           };
         }
         if (proposal.tool === "list") {
-          return { ok: true, output: listing(workspace.root) };
+          const listed = listRepository(workspace.root, String(args["path"] ?? "."));
+          return { ok: true, output: listed.output };
         }
-        if (proposal.tool === "grep") {
-          const pattern = String(args["pattern"] ?? "");
-          const literal = args["literal"] === true;
-          const flags = args["ignoreCase"] === true ? "i" : "";
-          const context = typeof args["context"] === "number" ? args["context"] : 0;
-          const globPattern = typeof args["glob"] === "string" ? args["glob"] : undefined;
-          let matcher: RegExp;
-          try {
-            // An invalid regex is the model's mistake to hear about, not an
-            // exception to crash on -- and falling back to a literal search
-            // silently would answer a different question than the one asked.
-            matcher = new RegExp(literal ? escapeRegExp(pattern) : pattern, flags);
-          } catch (error) {
-            return {
-              ok: false,
-              output: `not a valid regular expression: ${error instanceof Error ? error.message : "invalid"}. Set literal true to search for it as plain text.`,
-            };
-          }
-          const hits: string[] = [];
-          for (const relative of listing(workspace.root).split("\n")) {
-            if (!relative) continue;
-            if (globPattern !== undefined && !globMatches(globPattern, relative)) continue;
-            const target = resolveInside(workspace.root, relative);
-            if (target === null || !existsSync(target)) continue;
-            let lines: string[];
-            try {
-              lines = readFileSync(target, "utf8").split("\n");
-            } catch {
-              continue;
-            }
-            lines.forEach((line, index) => {
-              if (!matcher.test(line)) return;
-              const from = Math.max(0, index - context);
-              const to = Math.min(lines.length - 1, index + context);
-              for (let n = from; n <= to; n += 1) {
-                hits.push(`${relative}:${n + 1}${n === index ? ":" : "-"} ${lines[n] ?? ""}`);
-              }
-            });
-            if (hits.length > 200) break;
-          }
+        if (proposal.tool === "glob") {
+          const result = globRepository(
+            workspace.root,
+            String(args["pattern"] ?? ""),
+            String(args["path"] ?? "."),
+          );
           return {
             ok: true,
-            output: hits.slice(0, 200).join("\n") || `no match for ${pattern}`,
+            output: `${result.output}${result.truncated ? "\n[glob results truncated]" : ""}`,
+          };
+        }
+        if (proposal.tool === "grep") {
+          const result = searchRepository(workspace.root, String(args["pattern"] ?? ""), {
+            path: String(args["path"] ?? "."),
+            ...(typeof args["glob"] === "string" ? { glob: args["glob"] } : {}),
+            ignoreCase: args["ignoreCase"] === true,
+            literal: args["literal"] === true,
+            context: typeof args["context"] === "number" ? args["context"] : 0,
+          });
+          return {
+            ok: true,
+            output: `${result.output}\n[${result.hits} matches in ${result.filesScanned} files${result.truncated ? "; truncated" : ""}]`,
           };
         }
         if (proposal.tool === "search") {
-          const needle = String(args["query"]);
-          const hits: string[] = [];
-          for (const relative of listing(workspace.root).split("\n")) {
-            if (!relative) continue;
-            const target = resolveInside(workspace.root, relative);
-            if (target === null || !existsSync(target)) continue;
-            readFileSync(target, "utf8")
-              .split("\n")
-              .forEach((line, index) => {
-                if (line.includes(needle)) hits.push(`${relative}:${index + 1}: ${line.trim()}`);
-              });
-            if (hits.length > 100) break;
-          }
-          return { ok: true, output: hits.join("\n") || `no match for ${needle}` };
+          const result = searchRepository(workspace.root, String(args["query"] ?? ""), {
+            path: String(args["path"] ?? "."),
+            literal: true,
+            maxHits: 100,
+          });
+          return {
+            ok: true,
+            output: `${result.output}\n[${result.hits} matches in ${result.filesScanned} files${result.truncated ? "; truncated" : ""}]`,
+          };
         }
         if (proposal.tool === "run") {
           // The command reaches here only after the approval gate: for `run`

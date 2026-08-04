@@ -10,7 +10,10 @@ Repository files, user instructions, generated model output, tool output, depend
 
 - Every file operation is rooted at one canonical repository directory.
 - Absolute paths, traversal, and symlink resolutions that escape the root are rejected.
-- `.git`, `.forge`, common secret files, generated directories, and configured deny patterns are excluded from discovery and reading. The repository root plus `.git`, `.forge`, and `.codex-bridge` cannot be targeted by first-class mutations.
+- `.git`, `.forge`, `.codex-bridge`, dependency/build/cache directories, common secret files, `.docs`, and `.meta` are excluded from ordinary repository discovery. Exercise specifications under `.docs` are admitted only by explicit task-packet mode. The repository root plus `.git`, `.forge`, and `.codex-bridge` cannot be targeted by first-class mutations.
+- Git-aware discovery uses the fixed token array `git ls-files -co --exclude-standard -z` with `shell: false`; repository content cannot change that command. Non-Git discovery does not follow directory symlinks.
+- Repository inspection is bounded to 50,000 indexed entries, 2 MiB per searched file, 200 regex GREP matches, 100 literal SEARCH matches, and 16,000 characters per read. Binary files are skipped by text search and rejected by text reads.
+- Whole-file replacement of an existing file requires a successful complete read of the current revision within the read bound. Ranged, clipped, failed, stale, binary, and hidden-path reads do not authorize replacement.
 - Proposed mutations are bound to exact file or tree snapshots. A changed source, destination, or planned parent makes the approved proposal stale and it is refused.
 
 ### Mutations
@@ -28,7 +31,7 @@ Repository files, user instructions, generated model output, tool output, depend
 ### Commands
 
 - Commands are token arrays and use `spawn` with `shell: false`.
-- A narrowly supported `cd <repository-directory> && <one command>` form changes only the validated working directory; additional shell chains, redirects, pipes, and escapes are rejected.
+- A narrowly supported `cd <repository-directory> && <one command>` form changes only the validated working directory for model commands and configured verification; additional shell chains, redirects, pipes, and escapes are rejected.
 - Commands run with a reduced environment that excludes provider credentials.
 - Duration, output, and process lifetime are bounded; timeouts terminate the process group.
 - In attended mode, command execution requires a separate approval. Headless execution requires the explicit `--yes` option.

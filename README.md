@@ -28,11 +28,12 @@ The npm package is currently a **0.1 public alpha**. See [`docs/STATUS.md`](docs
 
 ## Status
 
-`forge` on PATH runs this. It supports read-only and plan modes, anchored text
-edits, file and directory creation, recursive deletion, move/rename, and copy
-through revision-guarded preview and approval. It also runs approved commands,
-verifies completion, and asks before workspace effects unless explicitly
-automated. Driven end to end against local Qwen coder models.
+`forge` on PATH runs this. It indexes bounded Git-aware project trees, can
+navigate deep monorepos with scoped list/glob/search and ranged reads, supports
+read-only and plan modes, and applies anchored edits plus transactional file and
+directory operations. It also runs approved commands, verifies completion, and
+asks before workspace effects unless explicitly automated. Driven end to end
+against local Qwen coder models.
 
 **Measured, as of 2026-08-04:**
 
@@ -153,6 +154,23 @@ Named profiles keep local-model-specific settings together:
 Use `forge profiles`, `forge config --json`, or override for one run with
 `--profile <name>`. Explicit CLI flags and `FORGE_URL` / `FORGE_MODEL` take
 precedence over a profile.
+
+Verification detection understands npm, pnpm, Yarn, and Bun root projects. It
+prefers a root `check` script when present and otherwise uses `test`. Monorepos
+can configure package-specific checks without a shell:
+
+```json
+{
+  "verify": [
+    ["cd", "packages/api", "&&", "pnpm", "test"],
+    ["cd", "apps/web", "&&", "pnpm", "check"]
+  ]
+}
+```
+
+The `cd <repository-directory> && <one command>` spelling is parsed into a
+validated working directory and a token-array command; it is never passed to a
+shell.
 
 `--isolate` is the safest headless repository mode currently shipped. It requires
 the selected path to be the Git root and completely clean, including untracked
@@ -276,6 +294,37 @@ Prefer the smallest ownership change. Re-run the narrow failing test first.
 
 At most two keyword-matched packs are included. Add one only after retained
 failures show a repeated, general error class, then rerun the same paired screen.
+
+## Project-scale repository navigation
+
+Forge builds a deterministic repository index before each task. In a Git
+repository it uses tracked plus non-ignored untracked paths; outside Git it uses
+a bounded filesystem walk. The initial prompt receives a compact project map
+with top-level areas and important manifests instead of a shallow file dump.
+
+The text and native protocols expose the same inspection operations:
+
+```text
+LIST packages/api
+GLOB **/*.test.ts
+GREP RequestHandler
+SEARCH exact literal text
+READ packages/api/src/server.ts:120-220
+```
+
+`LIST` shows one directory level. `GLOB`, `GREP`, and `SEARCH` operate across the
+complete bounded index, including paths deeper than three levels and beyond 200
+files. `READ path:start-end` gives an exact line range, while an unrestricted
+large read is clipped with a continuation instruction. Search skips binary files
+and files above 2 MiB; reads are bounded to 16,000 characters per action. A
+ranged, clipped, or failed read never authorizes a wholesale replacement of an
+existing file; large files must be changed with anchored edits. The index is
+capped at 50,000 entries.
+
+Generated dependency/build/cache directories, common credential files,
+`.docs`, and `.meta` are excluded from ordinary context. Exercise specifications
+under `.docs` remain available only through the explicit `--task-packet` mode.
+All resolved paths remain constrained to the selected repository.
 
 ## Filesystem operations
 

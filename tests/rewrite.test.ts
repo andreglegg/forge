@@ -14,7 +14,9 @@
  * read the file is not clobbering blind.
  *
  * So CREATE over an existing file is allowed exactly when the model has read
- * that file at its current revision, and refused otherwise. The prompt is
+ * the complete bounded file at its current revision, and refused otherwise.
+ * Ranged reads and clipped large-file reads are evidence for anchored edits,
+ * not permission to replace bytes the model has never seen. The prompt is
  * unchanged deliberately -- protocol.ts records that padding it measurably hurt.
  */
 
@@ -94,6 +96,77 @@ describe("CREATE over an existing file", () => {
       await run.submit(createOf("index.html", "<html>replaced</html>\n"));
 
       expect(readFileSync(file, "utf8")).toBe("<html>replaced</html>\n");
+    });
+  });
+
+  test("a ranged read does not license a whole-file clobber", async () => {
+    await withRepo(async (dir) => {
+      const file = path.join(dir, "index.html");
+      writeFileSync(file, "<html>original</html>\n");
+      const run = new Run({ workspace: new Workspace(dir), ...NOOP_TOOLS });
+      autoRespond(run, "always");
+      run.start("make it 3d");
+
+      await run.submit({
+        text: "reading one range",
+        proposals: [
+          {
+            kind: "call",
+            tool: "read",
+            arguments: { path: "index.html", start: 1, end: 1 },
+          },
+        ],
+        final: null,
+      });
+      const outcome = await run.submit(createOf("index.html", "<html>replaced</html>\n"));
+
+      expect(outcome.results.some((result) => !result.ok)).toBe(true);
+      expect(outcome.results.at(-1)?.output).toMatch(/complete file/i);
+      expect(readFileSync(file, "utf8")).toBe("<html>original</html>\n");
+    });
+  });
+
+  test("an unrestricted read of a large clipped file does not license a clobber", async () => {
+    await withRepo(async (dir) => {
+      const file = path.join(dir, "large.html");
+      const original = `<html>${"x".repeat(20_000)}</html>\n`;
+      writeFileSync(file, original);
+      const run = new Run({ workspace: new Workspace(dir), ...NOOP_TOOLS });
+      autoRespond(run, "always");
+      run.start("replace the large page");
+
+      await run.submit({
+        text: "reading the large file",
+        proposals: [{ kind: "call", tool: "read", arguments: { path: "large.html" } }],
+        final: null,
+      });
+      const outcome = await run.submit(createOf("large.html", "<html>replaced</html>\n"));
+
+      expect(outcome.results.some((result) => !result.ok)).toBe(true);
+      expect(outcome.results.at(-1)?.output).toMatch(/anchored EDIT/i);
+      expect(readFileSync(file, "utf8")).toBe(original);
+    });
+  });
+
+  test("a failed read does not license a clobber", async () => {
+    await withRepo(async (dir) => {
+      const file = path.join(dir, "index.html");
+      writeFileSync(file, "<html>original</html>\n");
+      const run = new Run({
+        workspace: new Workspace(dir),
+        runTool: async () => ({ ok: false, output: "read failed" }),
+      });
+      run.start("make it 3d");
+
+      await run.submit({
+        text: "reading first",
+        proposals: [{ kind: "call", tool: "read", arguments: { path: "index.html" } }],
+        final: null,
+      });
+      const outcome = await run.submit(createOf("index.html", "<html>replaced</html>\n"));
+
+      expect(outcome.results.some((result) => !result.ok)).toBe(true);
+      expect(readFileSync(file, "utf8")).toBe("<html>original</html>\n");
     });
   });
 

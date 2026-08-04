@@ -36,6 +36,34 @@ describe("task context import following", () => {
     }
   });
 
+  test("finds and inlines a named file beyond the old depth and 200-file limits", async () => {
+    const dir = realpathSync(await mkdtemp(path.join(tmpdir(), "context-large-project-")));
+    try {
+      for (let index = 0; index < 250; index += 1) {
+        const generated = path.join(dir, "packages", "generated", String(index));
+        mkdirSync(generated, { recursive: true });
+        writeFileSync(
+          path.join(generated, `module-${index}.ts`),
+          `export const generated${index} = ${index};\n`,
+        );
+      }
+      const relative = "packages/app/src/features/billing/invoice-service.ts";
+      const target = path.join(dir, ...relative.split("/"));
+      mkdirSync(path.dirname(target), { recursive: true });
+      writeFileSync(target, "export const BILLING_SENTINEL = true;\n");
+
+      const result = taskContext(new Workspace(dir), "fix the invoice service", 24_000);
+      const selected = result.receipt.items.find((item) => item.path === relative);
+
+      expect(result.text).toContain("Repository index:");
+      expect(result.text).toContain("BILLING_SENTINEL");
+      expect(selected?.included).toBe(true);
+      expect(selected?.reason).toContain("inlined");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("the opt-in task packet includes hidden exercise specifications", async () => {
     const dir = realpathSync(await mkdtemp(path.join(tmpdir(), "context-packet-")));
     try {

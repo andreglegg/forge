@@ -220,7 +220,7 @@ export const TOOLS: readonly ToolSpec[] = [
       end: z.number().int().min(1).optional(),
     }),
     describe: (a) => `read ${String(a["path"])}`,
-    textForm: "READ <path>",
+    textForm: "READ <path>[:<start>-<end>]",
   },
   {
     name: "list",
@@ -228,6 +228,16 @@ export const TOOLS: readonly ToolSpec[] = [
     schema: z.strictObject({ path: z.string().default(".") }),
     describe: (a) => `list ${String(a["path"] ?? ".")}`,
     textForm: "LIST <path>",
+  },
+  {
+    name: "glob",
+    mutates: false,
+    schema: z.strictObject({
+      pattern: z.string().min(1),
+      path: z.string().default("."),
+    }),
+    describe: (a) => `find paths matching ${JSON.stringify(a["pattern"])}`,
+    textForm: "GLOB <pattern>",
   },
   {
     // A real grep, not a substring scan. The competitor ships one and forge
@@ -353,9 +363,8 @@ export function textProtocolPrompt(): string {
     "  the replacement text",
     "  >>>>>>> REPLACE",
     "",
-    "To create a file, use CREATE instead of EDIT and leave the SEARCH side empty.",
-    "DELETE removes one file, symlink, or directory tree. Never delete the repository root.",
-    "MOVE, COPY, and RENAME use an exact absent destination; delete an old destination explicitly first.",
+    "CREATE uses an empty SEARCH; READ path:start-end returns an exact bounded excerpt.",
+    "LIST is one directory; GLOB/GREP search all indexed paths; DELETE never targets the root; MOVE/COPY/RENAME require an absent destination.",
     // Reverted from a longer version. Adding eight lines about marker
     // collisions and anchor sizing made things measurably WORSE: the task it
     // targeted went from 2/3 to 0/3 and false successes rose from 1 to 6
@@ -390,8 +399,21 @@ export function renderProposal(proposal: ActionProposal): string {
     if (proposal.tool === "run") {
       return `RUN ${((args["command"] as string[]) ?? []).join(" ")}`;
     }
+    if (proposal.tool === "read") {
+      const start = args["start"];
+      const end = args["end"];
+      const range =
+        typeof start === "number" ? `:${start}-${typeof end === "number" ? end : start}` : "";
+      return `READ ${String(args["path"] ?? "")}${range}`;
+    }
     if (proposal.tool === "search") {
       return `SEARCH ${String(args["query"] ?? "")}`;
+    }
+    if (proposal.tool === "grep") {
+      return `GREP ${String(args["pattern"] ?? "")}`;
+    }
+    if (proposal.tool === "glob") {
+      return `GLOB ${String(args["pattern"] ?? "")}`;
     }
     if (["move", "copy", "rename"].includes(proposal.tool)) {
       return `${proposal.tool.toUpperCase()} ${String(args["source"] ?? "")} -> ${String(args["destination"] ?? "")}`;

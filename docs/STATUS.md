@@ -8,10 +8,10 @@ This table describes the executable TypeScript product in `src/`.
 | Headless runs | Shipped | Stable exit codes, `--yes`, JSON result document. |
 | OpenAI-compatible providers | Shipped | Model discovery plus a minimal completion preflight that catches inactive runtime profiles before coding begins. |
 | Native OpenAI/Anthropic tools | Shipped | Optional `--native`; normalized into the same action protocol. |
-| Repository reads/search/grep | Shipped | Canonical-root containment and bounded output. |
+| Project-scale repository navigation | Shipped | Git-ignore-aware index up to 50,000 entries, compact project maps, one-level `LIST`, deep `GLOB`/`GREP`/`SEARCH`, ranged `READ`, binary/secret filtering, and text/native parity. Proven end to end on a 223-file deep project. |
 | Transactional filesystem operations | Shipped | Anchored edits plus `DELETE`, `MKDIR`, `MOVE`, `COPY`, and `RENAME` support files, bounded directory trees, binary content, and symlinks. Operations are previewed, separately approved, snapshot-revalidated, journalled per entry, and binary-safe undoable. Destinations must be absent; repository metadata roots are protected. |
 | Command execution | Shipped | Token arrays, no shell, reduced environment, timeout and process-group termination. |
-| Verification gate | Shipped | Detected/configured commands and confirmation of a passing suite. |
+| Verification gate | Shipped | Detected/configured commands and confirmation of a passing suite. Node detection understands npm/pnpm/Yarn/Bun and prefers `check`; configured checks can safely select repository subdirectories for monorepos. |
 | Sessions/show/undo | Shipped | Crash-tolerant repository-local journals and revision-guarded undo. |
 | Interactive session resume | Shipped | `/resume [id]`, `forge continue [id]`, and `forge resume [id]` restore observable trace and tool evidence. |
 | Evidence-preserving compaction | Shipped | Long transcripts retain stable setup, newest turns, prior failures, source locations, and explicit user constraints under a deterministic character budget. |

@@ -40,13 +40,17 @@ The workspace refuses implicit overwrite, repository-root or metadata mutation, 
 
 ## Repository context
 
-`src/context.ts` compiles a bounded task-specific prompt and emits a receipt describing what was included or dropped. The current strategy combines lexical file scoring, small-file inlining, one-hop local-import following, repository instructions, and an optional exercise task packet.
+`src/repository.ts` builds a deterministic bounded project index. Git repositories use `git ls-files -co --exclude-standard` through a fixed shell-free invocation, so tracked files and non-ignored untracked files are visible without indexing dependencies or build output. Non-Git directories use a bounded recursive fallback. The index is capped at 50,000 entries and excludes common credentials, generated/cache directories, `.docs`, and `.meta` from ordinary context.
+
+The same module powers one-level `LIST`, deep `GLOB`, regex `GREP`, literal `SEARCH`, and exact ranged `READ` operations. Search skips binary files and files above 2 MiB; reads return at most 16,000 characters with an explicit continuation range. All paths pass through canonical repository containment.
+
+`src/context.ts` compiles a bounded task-specific prompt and emits a receipt describing what was included or dropped. The current strategy combines a compact project map, lexical file scoring over the complete index, small-file inlining, one-hop local-import following, repository instructions, and an optional exercise task packet. The old depth-three/200-file discovery ceiling no longer defines what the model can locate.
 
 `src/compaction.ts` bounds long transcripts deterministically. It retains stable setup, a recent contiguous tail, and selected omitted evidence such as verification failures, source locations, executed actions, and explicit user constraints. It deliberately labels compacted evidence as historical and never claims old file contents are current. No second model is used for summarization.
 
 ## Verification
 
-`src/verify.ts` detects common project checks or uses the explicit `verify` array from `forge.json`. A successful completion is independently verified. Passing suites are repeated once to detect a non-reproducible pass. Without a test command, Forge performs a strict read-back review and fails closed if it cannot establish completion.
+`src/verify.ts` detects common project checks or uses the explicit `verify` array from `forge.json`. Node detection understands npm, pnpm, Yarn, and Bun, prefers a root `check` script, and falls back to `test`. Configured checks can use the constrained `cd <repository-directory> && <one command>` form to verify individual monorepo packages without a shell. A successful completion is independently verified. Passing suites are repeated once to detect a non-reproducible pass. Without a test command, Forge performs a strict read-back review and fails closed if it cannot establish completion.
 
 ## Isolated execution and promotion
 

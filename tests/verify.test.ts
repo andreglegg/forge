@@ -9,7 +9,7 @@
  */
 
 import { realpathSync } from "node:fs";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, test } from "vitest";
@@ -228,6 +228,44 @@ describe("verify", () => {
     });
   });
 
+  test("runs configured verification in a validated repository subdirectory", async () => {
+    await withDir(async (dir) => {
+      const packageDir = path.join(dir, "packages", "api");
+      await mkdir(packageDir, { recursive: true });
+      const report = await verify(
+        {
+          commands: [
+            [
+              "cd",
+              "packages/api",
+              "&&",
+              NODE,
+              "-e",
+              `process.exit(process.cwd() === ${JSON.stringify(packageDir)} ? 0 : 1)`,
+            ],
+          ],
+        },
+        { cwd: dir },
+      );
+
+      expect(report.passed).toBe(true);
+      expect(report.ran[0]?.command.slice(0, 4)).toEqual(["cd", "packages/api", "&&", NODE]);
+    });
+  });
+
+  test("rejects a verification working directory outside the repository", async () => {
+    await withDir(async (dir) => {
+      const report = await verify(
+        { commands: [["cd", "../outside", "&&", NODE, "-e", "process.exit(0)"]] },
+        { cwd: dir },
+      );
+
+      expect(report.passed).toBe(false);
+      expect(report.ran[0]?.code).toBeNull();
+      expect(report.ran[0]?.output).toContain("outside the repository");
+    });
+  });
+
   test("a command whose binary does not exist fails instead of throwing", async () => {
     await withDir(async (dir) => {
       // The realistic path into this: `detectCommands` guesses `cargo test`
@@ -254,6 +292,37 @@ describe("detectCommands", () => {
       );
 
       expect(detectCommands(dir)).toEqual([["npm", "test"]]);
+    });
+  });
+
+  test("uses a declared package manager and prefers the comprehensive check script", async () => {
+    await withDir(async (dir) => {
+      await writeFile(
+        path.join(dir, "package.json"),
+        JSON.stringify({
+          name: "workspace",
+          packageManager: "pnpm@10.0.0",
+          scripts: { test: "vitest run", check: "pnpm lint && pnpm test" },
+        }),
+      );
+      await writeFile(path.join(dir, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n");
+
+      expect(detectCommands(dir)).toEqual([["pnpm", "check"]]);
+    });
+  });
+
+  test("detects yarn and bun projects from their lockfiles", async () => {
+    await withDir(async (dir) => {
+      await writeFile(
+        path.join(dir, "package.json"),
+        JSON.stringify({ name: "workspace", scripts: { test: "vitest run" } }),
+      );
+      await writeFile(path.join(dir, "yarn.lock"), "# yarn lockfile\n");
+      expect(detectCommands(dir)).toEqual([["yarn", "test"]]);
+      await rm(path.join(dir, "yarn.lock"));
+
+      await writeFile(path.join(dir, "bun.lock"), "lock\n");
+      expect(detectCommands(dir)).toEqual([["bun", "run", "test"]]);
     });
   });
 

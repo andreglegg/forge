@@ -225,15 +225,19 @@ export class TextCodec implements Codec {
     const args: Record<string, unknown> =
       name === "run"
         ? { command: splitArgv(rest) }
-        : name === "grep"
-          ? { pattern: rest }
-          : name === "search"
-            ? { query: rest }
-            : name === "list"
-              ? { path: rest || "." }
-              : ["move", "copy", "rename"].includes(name)
-                ? pathPair(rest)
-                : { path: rest };
+        : name === "read"
+          ? readArguments(rest)
+          : name === "grep"
+            ? { pattern: rest }
+            : name === "glob"
+              ? { pattern: rest, path: "." }
+              : name === "search"
+                ? { query: rest }
+                : name === "list"
+                  ? { path: rest || "." }
+                  : ["move", "copy", "rename"].includes(name)
+                    ? pathPair(rest)
+                    : { path: rest };
     const parsed = tool.schema.safeParse(args);
     if (!parsed.success) {
       this.repairs.add(`bad_directive:${name}`);
@@ -275,6 +279,14 @@ export class TextCodec implements Codec {
  * The result is a token array passed to `spawn` with `shell: false`, so there
  * is nothing for a `;` or a `$(...)` to mean.
  */
+function readArguments(text: string): Record<string, unknown> {
+  const ranged = /^(.*):(\d+)(?:-(\d+))?$/.exec(text);
+  if (ranged === null || !(ranged[1] ?? "").trim()) return { path: text };
+  const start = Number.parseInt(ranged[2] ?? "", 10);
+  const end = ranged[3] === undefined ? start : Number.parseInt(ranged[3], 10);
+  return { path: (ranged[1] ?? "").trim(), start, end };
+}
+
 function pathPair(text: string): Record<string, unknown> {
   const arrow = /\s+->\s+/.exec(text);
   if (arrow !== null && arrow.index > 0) {
