@@ -92,7 +92,7 @@ forge run "<task>" --yes  approve workspace effects (CI, batch)
 forge run "<task>" --yes --isolate
                           run in a detached clean Git worktree and retain a patch
 forge run "<task>" --yes --isolate --promote
-                          apply the verified patch after conflict checks
+                          apply the verified patch after conflict/risk checks
 forge plan "<task>"       inspect and return a plan without effects
 forge run "<question>" --read-only
 forge doctor              provider/model/verifier diagnostics
@@ -118,6 +118,7 @@ forge compare-little-coder <forge-report> <little-coder-report> <case-manifest>
   --batch-actions         invite bounded independent reads/known-file edits
   --isolate               require a clean Git root and protect the original checkout
   --promote               apply a verified isolated patch to the original
+  --allow-risk            override reviewed critical patch-risk findings
   --mode <mode>           workspace, read-only, or plan
   --stream-json           durable Run events as JSONL plus a final result
 ```
@@ -156,8 +157,12 @@ the selected path to be the Git root and completely clean, including untracked
 files. The model and verifier run in a detached temporary worktree. Forge writes
 the resulting binary patch to `.forge/isolated/`; without `--promote`, the
 original remains unchanged. Promotion requires verification and rechecks HEAD,
-cleanliness, and `git apply --check`. This protects repository mutations but is
-not an OS, network, or process sandbox.
+cleanliness, and `git apply --check`. Added patch lines are also scanned for
+likely credentials/private keys, package install lifecycle scripts, dangerous
+workflows, and dependency metadata changes. Critical findings retain the patch
+and block promotion unless you inspect it and explicitly add `--allow-risk`.
+This heuristic scan is not proof that a patch is safe. Worktree isolation
+protects repository mutations but is not an OS, network, or process sandbox.
 
 `FORGE_TRACE=<path>` writes every turn's exact bytes plus the decoded proposals
 and repairs, one JSON object per line. Reach for it first when a run misbehaves:

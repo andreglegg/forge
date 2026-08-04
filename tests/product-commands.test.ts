@@ -266,6 +266,8 @@ describe("isolated command validation", () => {
         ["run", "task", "--repo", root, "--isolate", "--promote", "--no-verify"],
         unverified.io,
       );
+      const riskOnly = capturedIO();
+      const riskOnlyCode = await main(["run", "task", "--repo", root, "--allow-risk"], riskOnly.io);
       const plan = capturedIO();
       const planCode = await main(["plan", "task", "--repo", root, "--isolate"], plan.io);
 
@@ -273,6 +275,8 @@ describe("isolated command validation", () => {
       expect(promoteOnly.err).toEqual([expect.stringMatching(/requires --isolate/i)]);
       expect(unverifiedCode).toBe(2);
       expect(unverified.err).toEqual([expect.stringMatching(/requires verification/i)]);
+      expect(riskOnlyCode).toBe(2);
+      expect(riskOnly.err).toEqual([expect.stringMatching(/requires --isolate --promote/i)]);
       expect(planCode).toBe(2);
       expect(plan.err).toEqual([expect.stringMatching(/only.*forge run.*workspace mode/i)]);
     });

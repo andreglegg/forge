@@ -42,6 +42,7 @@ Repository files, user instructions, generated model output, tool output, depend
 - Tracked edits and non-ignored new files are captured as a binary-capable Git patch under `.forge/isolated/` in the original repository.
 - Without `--promote`, the original working tree is never changed.
 - `--promote` is incompatible with `--no-verify`. Promotion rechecks the original HEAD, requires the original tree to remain clean, runs `git apply --check`, and only then applies the patch.
+- Before promotion, added patch lines are scanned for likely credentials/private keys, package install lifecycle scripts, privileged/download-to-shell workflows, and dependency metadata changes. Critical findings retain the patch and block promotion unless the user explicitly supplies `--allow-risk` after review.
 - Session, trace, and retained-object evidence is copied back before the temporary worktree is removed.
 
 ### Verification
@@ -60,7 +61,7 @@ The current TypeScript product does not yet provide:
 - container, VM, seccomp, AppArmor, or restricted-user isolation;
 - network denial for repository commands;
 - CPU, memory, process-count, or disk quotas beyond command timeout/output bounds;
-- dependency-confusion or secret scanning;
+- complete dependency-confusion analysis or a guarantee that heuristic patch scanning finds every secret;
 - a third-party plugin or MCP permission boundary.
 
 Do not run Forge with elevated privileges or use autonomous approval on an untrusted repository. Git-worktree isolation protects the user's selected checkout from unpromoted edits, but it does not isolate processes, network, credentials available outside Forge's scrubbed command environment, or the host filesystem.

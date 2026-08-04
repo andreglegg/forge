@@ -20,6 +20,7 @@ All notable product changes are recorded here. Forge follows semantic versioning
 - `--stream-json` durable event and final-result protocol.
 - `forge run --isolate` detached Git-worktree execution with retained binary patches and transferred session evidence.
 - `--promote` for verified, conflict-checked patch application back to the original clean checkout.
+- Promotion-time patch risk scanning with an explicit `--allow-risk` override for reviewed critical findings.
 
 ### Reliability baseline
 

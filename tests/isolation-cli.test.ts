@@ -17,13 +17,21 @@ function capturedIO(): { readonly io: IO; readonly out: string[]; readonly err: 
   return { io: { out: (text) => out.push(text), err: (text) => err.push(text) }, out, err };
 }
 
-async function repository(): Promise<string> {
+interface ScriptedChange {
+  readonly file: string;
+  readonly before: string;
+  readonly after: string;
+}
+
+const NOTE_CHANGE: ScriptedChange = { file: "note.txt", before: "old\n", after: "new\n" };
+
+async function repository(change: ScriptedChange = NOTE_CHANGE): Promise<string> {
   const root = realpathSync(await mkdtemp(path.join(tmpdir(), "forge-isolation-cli-")));
   git(root, "init");
   git(root, "config", "user.email", "forge-tests@example.invalid");
   git(root, "config", "user.name", "Forge Tests");
   writeFileSync(path.join(root, ".gitignore"), ".forge/\n");
-  writeFileSync(path.join(root, "note.txt"), "old\n");
+  writeFileSync(path.join(root, change.file), change.before);
   writeFileSync(
     path.join(root, "forge.json"),
     `${JSON.stringify(
@@ -32,7 +40,7 @@ async function repository(): Promise<string> {
           [
             process.execPath,
             "-e",
-            "const fs=require('node:fs'); if(fs.readFileSync('note.txt','utf8')!=='new\\n') process.exit(1)",
+            `const fs=require('node:fs'); if(fs.readFileSync(${JSON.stringify(change.file)},'utf8')!==${JSON.stringify(change.after)}) process.exit(1)`,
           ],
         ],
       },
@@ -40,12 +48,14 @@ async function repository(): Promise<string> {
       2,
     )}\n`,
   );
-  git(root, "add", ".gitignore", "note.txt", "forge.json");
+  git(root, "add", ".gitignore", change.file, "forge.json");
   git(root, "commit", "-m", "initial");
   return root;
 }
 
-async function scriptedProvider(): Promise<{ readonly server: Server; readonly url: string }> {
+async function scriptedProvider(
+  change: ScriptedChange = NOTE_CHANGE,
+): Promise<{ readonly server: Server; readonly url: string }> {
   let streamingTurn = 0;
   const server = createServer((request, response) => {
     if (request.method === "GET" && request.url === "/v1/models") {
@@ -72,15 +82,15 @@ async function scriptedProvider(): Promise<{ readonly server: Server; readonly u
       const text =
         streamingTurn % 2 === 1
           ? [
-              "EDIT note.txt",
+              `EDIT ${change.file}`,
               "<<<<<<< SEARCH",
-              "old",
+              change.before.trimEnd(),
               "=======",
-              "new",
+              change.after.trimEnd(),
               ">>>>>>> REPLACE",
               "",
             ].join("\n")
-          : "DONE changed note.txt from old to new\n";
+          : `DONE changed ${change.file}\n`;
       response.writeHead(200, { "content-type": "text/event-stream" });
       response.end(
         `data: ${JSON.stringify({ choices: [{ delta: { content: text } }] })}\n\ndata: [DONE]\n\n`,
@@ -176,5 +186,97 @@ describe("isolated CLI runs", () => {
     });
     expect(readFileSync(path.join(root, "note.txt"), "utf8")).toBe("new\n");
     expect(git(root, "status", "--porcelain=v1", "--untracked-files=all")).toBe("M note.txt");
+  }, 30_000);
+
+  test("blocks critical patch risks until explicitly overridden", async () => {
+    const change: ScriptedChange = {
+      file: "config.ts",
+      before: 'export const apiKey = "safe";\n',
+      after: 'export const apiKey = "sk-abcdefghijklmnopqrstuvwxyz123456";\n',
+    };
+    const root = await repository(change);
+    cleanup.push(async () => rm(root, { recursive: true, force: true }));
+    const provider = await scriptedProvider(change);
+    cleanup.push(
+      async () =>
+        new Promise<void>((resolve, reject) =>
+          provider.server.close((error) => (error ? reject(error) : resolve())),
+        ),
+    );
+
+    const blocked = capturedIO();
+    const blockedCode = await main(
+      [
+        "run",
+        "Update config.ts.",
+        "--repo",
+        root,
+        "--url",
+        provider.url,
+        "--model",
+        "scripted",
+        "--yes",
+        "--isolate",
+        "--promote",
+        "--json",
+      ],
+      blocked.io,
+    );
+    const blockedResult = JSON.parse(blocked.out.join("\n")) as {
+      isolation: {
+        patch: string;
+        promoted: boolean;
+        risks: Array<{ severity: string; code: string }>;
+        riskOverride: boolean;
+        promotionBlocked: string | null;
+      };
+    };
+
+    expect(blockedCode).toBe(2);
+    expect(blocked.err).toEqual([]);
+    expect(readFileSync(path.join(root, change.file), "utf8")).toBe(change.before);
+    expect(blockedResult.isolation).toMatchObject({
+      promoted: false,
+      riskOverride: false,
+      promotionBlocked: expect.stringMatching(/critical patch risk/i),
+      risks: [expect.objectContaining({ severity: "critical", code: "likely_secret" })],
+    });
+    expect(existsSync(path.join(root, blockedResult.isolation.patch))).toBe(true);
+
+    const overridden = capturedIO();
+    const overriddenCode = await main(
+      [
+        "run",
+        "Update config.ts.",
+        "--repo",
+        root,
+        "--url",
+        provider.url,
+        "--model",
+        "scripted",
+        "--yes",
+        "--isolate",
+        "--promote",
+        "--allow-risk",
+        "--json",
+      ],
+      overridden.io,
+    );
+    const overriddenResult = JSON.parse(overridden.out.join("\n")) as {
+      isolation: {
+        promoted: boolean;
+        riskOverride: boolean;
+        promotionBlocked: string | null;
+      };
+    };
+
+    expect(overriddenCode).toBe(0);
+    expect(overridden.err).toEqual([]);
+    expect(overriddenResult.isolation).toMatchObject({
+      promoted: true,
+      riskOverride: true,
+      promotionBlocked: null,
+    });
+    expect(readFileSync(path.join(root, change.file), "utf8")).toBe(change.after);
   }, 30_000);
 });

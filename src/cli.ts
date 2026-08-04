@@ -49,6 +49,7 @@ import {
   createIsolatedWorktree,
   type IsolatedWorktree,
   promoteIsolatedPatch,
+  readCapturedPatch,
   removeIsolatedWorktree,
   transferIsolatedArtifacts,
 } from "./isolation.js";
@@ -89,6 +90,7 @@ import {
   TRACES_SUBDIRECTORY,
   traceFileFor,
 } from "./replay.js";
+import { decidePromotionRisk, type PatchRisk, scanPatchRisks } from "./risk.js";
 import {
   type ActionResult,
   ApprovalPolicy,
@@ -153,6 +155,7 @@ const USAGE = [
   "  --yes                    approve every action (headless, CI)",
   "  --isolate                run in a detached temporary Git worktree",
   "  --promote                apply a verified isolated patch to the original",
+  "  --allow-risk             override critical patch-risk promotion blocks",
   "  --mode <mode>            workspace, read-only, or plan",
   "  --read-only              deny edits and command execution",
   "  --plan                   plan mode alias",
@@ -811,12 +814,17 @@ export async function main(argv: readonly string[], io: IO = consoleIO): Promise
   }
   const isolate = options["isolate"] === true;
   const promote = options["promote"] === true;
+  const allowRisk = options["allow-risk"] === true;
   if (promote && !isolate) {
     io.err("--promote requires --isolate.");
     return 2;
   }
   if (promote && options["no-verify"] === true) {
     io.err("--promote requires verification; remove --no-verify.");
+    return 2;
+  }
+  if (allowRisk && (!isolate || !promote)) {
+    io.err("--allow-risk requires --isolate --promote.");
     return 2;
   }
   if (isolate && (command !== "run" || mode !== "workspace")) {
@@ -1388,7 +1396,7 @@ export async function main(argv: readonly string[], io: IO = consoleIO): Promise
         native,
         project,
         mode,
-        isolatedFinalizer(isolated, promote, options, io),
+        isolatedFinalizer(isolated, promote, allowRisk, options, io),
       );
     } catch (error) {
       try {
@@ -1508,13 +1516,16 @@ type HeadlessFinalizer = (result: HeadlessResultDocument) => Promise<HeadlessFin
 function isolatedFinalizer(
   worktree: IsolatedWorktree,
   promotionRequested: boolean,
+  allowRisk: boolean,
   options: Readonly<Record<string, string | boolean>>,
   io: IO,
 ): HeadlessFinalizer {
   return async (result) => {
     const errors: string[] = [];
     let patch: Awaited<ReturnType<typeof captureIsolatedPatch>> | null = null;
+    let risks: PatchRisk[] = [];
     let promoted = false;
+    let promotionBlocked: string | null = null;
     try {
       patch = await captureIsolatedPatch(worktree);
     } catch (error) {
@@ -1522,6 +1533,16 @@ function isolatedFinalizer(
         `could not capture isolated patch: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
+    if (patch?.changed === true) {
+      try {
+        risks = scanPatchRisks(readCapturedPatch(patch));
+      } catch (error) {
+        errors.push(
+          `could not scan isolated patch: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
+    const riskDecision = decidePromotionRisk(risks, allowRisk);
     try {
       transferIsolatedArtifacts(worktree, result.session);
     } catch (error) {
@@ -1530,13 +1551,17 @@ function isolatedFinalizer(
       );
     }
     if (promotionRequested && result.ok && patch?.changed === true) {
-      try {
-        await promoteIsolatedPatch(worktree, patch);
-        promoted = true;
-      } catch (error) {
-        errors.push(
-          `could not promote isolated patch: ${error instanceof Error ? error.message : String(error)}`,
-        );
+      if (!riskDecision.allowed) {
+        promotionBlocked = riskDecision.reason;
+      } else {
+        try {
+          await promoteIsolatedPatch(worktree, patch);
+          promoted = true;
+        } catch (error) {
+          errors.push(
+            `could not promote isolated patch: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
       }
     }
     try {
@@ -1558,10 +1583,14 @@ function isolatedFinalizer(
       } else if (patch !== null) {
         io.out("isolated run produced no repository changes");
       }
+      for (const risk of risks) {
+        io.err(`${risk.severity}: ${risk.file ?? "patch"} · ${risk.message}`);
+      }
+      if (promotionBlocked !== null) io.err(promotionBlocked);
       for (const error of errors) io.err(error);
     }
     return {
-      ...(errors.length > 0 ? { code: 2 } : {}),
+      ...(errors.length > 0 || promotionBlocked !== null ? { code: 2 } : {}),
       metadata: {
         isolation: {
           id: worktree.id,
@@ -1571,6 +1600,9 @@ function isolatedFinalizer(
           bytes: patch?.bytes ?? null,
           promotionRequested,
           promoted,
+          risks,
+          riskOverride: riskDecision.overridden,
+          promotionBlocked,
           errors,
         },
       },
