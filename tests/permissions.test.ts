@@ -1,4 +1,4 @@
-import { readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -58,10 +58,12 @@ describe("runtime capability policy", () => {
     });
   });
 
-  test("refuses file deletion before preview even with automatic approval enabled", async () => {
+  test("refuses every filesystem mutation before preview even with automatic approval enabled", async () => {
     await withRepo(async (root) => {
       const file = path.join(root, "obsolete.ts");
       writeFileSync(file, "export const obsolete = true;\n");
+      mkdirSync(path.join(root, "source"));
+      writeFileSync(path.join(root, "source", "data.txt"), "data\n");
       let called = false;
       const run = new Run(
         {
@@ -80,17 +82,33 @@ describe("runtime capability policy", () => {
         }
       })();
 
-      run.start("remove obsolete file");
-      const outcome = await run.submit(decode("DELETE obsolete.ts\n"));
+      run.start("try filesystem mutations");
+      const outcome = await run.submit(
+        decode(
+          [
+            "DELETE obsolete.ts",
+            "MKDIR new-dir",
+            "MOVE source -> moved-source",
+            "COPY source -> copied-source",
+            "RENAME obsolete.ts -> renamed.ts",
+            "",
+          ].join("\n"),
+        ),
+      );
       run.close();
       await drained;
 
       expect(called).toBe(false);
       expect(readFileSync(file, "utf8")).toContain("obsolete");
-      expect(outcome.results[0]).toMatchObject({
-        ok: false,
-        output: expect.stringMatching(/read-only mode/i),
-      });
+      expect(existsSync(path.join(root, "source", "data.txt"))).toBe(true);
+      expect(existsSync(path.join(root, "new-dir"))).toBe(false);
+      expect(existsSync(path.join(root, "moved-source"))).toBe(false);
+      expect(existsSync(path.join(root, "copied-source"))).toBe(false);
+      expect(existsSync(path.join(root, "renamed.ts"))).toBe(false);
+      expect(outcome.results).toHaveLength(5);
+      expect(
+        outcome.results.every((result) => !result.ok && /read-only mode/i.test(result.output)),
+      ).toBe(true);
     });
   });
 

@@ -28,13 +28,15 @@ Durable decisions are appended to a journal. Token deltas are presentation-only 
 
 `src/protocol.ts` defines one semantic tool registry. The text codec and native provider codec both decode into `ActionProposal` values. Actions are bounded before execution so a malformed model turn cannot schedule unbounded effects.
 
-Reads, listing, search, grep, anchored replacement, individual-file deletion, and command execution all operate inside one canonical `Workspace`. File mutations follow:
+Reads, listing, search, grep, anchored replacement, recursive deletion, directory creation, move/rename, copy, and command execution all operate inside one canonical `Workspace`. First-class mutations follow:
 
 ```text
 propose -> preview in memory -> approve -> revalidate revision -> commit
 ```
 
-An edit preview contains the resulting file; a deletion preview contains the full removal diff. Approval therefore applies to a specific file revision and diff, not merely to a pathname. Deletions retain the removed bytes in the object store and journal `afterRevision: null`, allowing guarded undo while the path remains absent.
+An edit preview contains the resulting file. Tree operations contain a bounded manifest of file, directory, and symlink changes. Approval therefore applies to exact source, destination, and planned-parent snapshots rather than merely to path strings. Destructive bytes are retained before commit, and each affected entry is journalled with its type, mode, and before/after revision. Reverse replay can restore recursive deletes and moves or remove copied/created trees while refusing to overwrite later user work.
+
+The workspace refuses implicit overwrite, repository-root or metadata mutation, and trees above 10,000 entries or 128 MiB. Symlinks are handled as entries and never followed during recursive traversal. Specialized operations outside this boundary can still use separately approved shell-free commands, but those commands do not receive the structured preview or per-entry undo contract.
 
 ## Repository context
 
@@ -56,7 +58,7 @@ This isolates repository mutations, not processes. Commands still execute on the
 
 ## Persistence and recovery
 
-Every turn is recorded under `.forge/traces/`. Session journals are crash-tolerant append-only JSONL with final atomic repair. The CLI can list, show, resume into an interactive transcript, and safely undo committed mutations when the current file revision still matches the session record.
+Every turn is recorded under `.forge/traces/`. Session journals are crash-tolerant append-only JSONL with final atomic repair. The CLI can list, show, resume into an interactive transcript, and safely undo committed text and filesystem mutations when current entry state still matches the session record.
 
 Current sessions restore observable transcript and tool evidence. They do not resume a provider request that was in flight when the process stopped.
 

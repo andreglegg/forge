@@ -194,13 +194,18 @@ describe("revision-guarded file deletion", () => {
     });
   });
 
-  test("deletes files only, never directories", async () => {
+  test("deletes an explicitly targeted directory tree", async () => {
     await withRepo(async (root) => {
       await import("node:fs/promises").then(({ mkdir }) => mkdir(path.join(root, "src")));
       const workspace = new Workspace(root);
 
-      expect(() => workspace.previewDelete("src")).toThrow(/regular file/i);
-      expect(existsSync(path.join(root, "src"))).toBe(true);
+      const preview = workspace.previewDelete("src");
+      expect(preview.changes).toContainEqual(
+        expect.objectContaining({ operation: "delete", entryType: "directory", path: "src" }),
+      );
+
+      workspace.commit(preview);
+      expect(existsSync(path.join(root, "src"))).toBe(false);
     });
   });
 });

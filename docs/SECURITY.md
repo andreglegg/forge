@@ -10,16 +10,19 @@ Repository files, user instructions, generated model output, tool output, depend
 
 - Every file operation is rooted at one canonical repository directory.
 - Absolute paths, traversal, and symlink resolutions that escape the root are rejected.
-- `.git`, `.forge`, common secret files, generated directories, and configured deny patterns are excluded from discovery and reading.
-- Proposed edits are bound to the revision that was previewed. A changed file makes the approved proposal stale and it is refused.
+- `.git`, `.forge`, common secret files, generated directories, and configured deny patterns are excluded from discovery and reading. The repository root plus `.git`, `.forge`, and `.codex-bridge` cannot be targeted by first-class mutations.
+- Proposed mutations are bound to exact file or tree snapshots. A changed source, destination, or planned parent makes the approved proposal stale and it is refused.
 
 ### Mutations
 
-- The model proposes an anchored replacement or an explicit `DELETE <path>` directive; Forge previews the exact resulting diff before approval.
-- File deletion is restricted to one regular file per directive. Directories, recursive deletion, and final-component symlinks are refused.
-- Approval is scoped by action class. Approving an edit, deletion, or command does not approve the other classes.
-- Immediately before commit, Forge rechecks the exact file revision that was previewed. A concurrent save makes the approved mutation stale and it is refused.
-- Mutation events record before/after revisions and retain replaced or deleted content for guarded undo. Undo restores a deleted file only while its path remains absent.
+- The model can propose anchored text edits plus explicit `DELETE`, `MKDIR`, `MOVE`, `COPY`, and `RENAME` directives. Forge previews the resulting text diff or bounded entry manifest before approval.
+- Recursive traversal uses `lstat`: symlinks are copied, moved, deleted, and restored as entries rather than followed. Special files outside the regular-file/directory/symlink set are refused.
+- Tree operations are capped at 10,000 entries and 128 MiB of retained content. Larger or specialized operations require an explicitly approved command and lose structured per-entry preview/undo guarantees.
+- Move, copy, and rename destinations must be absent. Forge never performs an implicit overwrite; replacement requires a separately approved deletion.
+- Approval is scoped by action class. Text edits, each filesystem verb, and command execution do not approve one another.
+- Immediately before commit, Forge rechecks exact source, destination, and planned-parent snapshots. A concurrent change makes the approved mutation stale and it is refused.
+- Binary-safe undo content is retained before a destructive commit begins. Mutation events record every affected entry, its type, basic permission mode, and before/after revisions. Undo operates in reverse order and refuses to overwrite or recursively remove later user work.
+- Structured undo preserves file bytes, symlink targets, directory structure, and basic mode bits. It does not promise to preserve ownership, ACLs, extended attributes, timestamps, sparse-file layout, or hard-link identity.
 - A final claim in a turn whose mutations failed is rejected.
 
 ### Commands

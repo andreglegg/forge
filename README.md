@@ -28,11 +28,11 @@ The npm package is currently a **0.1 public alpha**. See [`docs/STATUS.md`](docs
 
 ## Status
 
-`forge` on PATH runs this. It supports read-only and plan modes, edits through
-anchored search/replace, deletes individual files through revision-guarded
-preview and approval, runs approved commands, verifies completion, and asks
-before workspace effects unless explicitly automated. Driven end to end against
-local Qwen coder models.
+`forge` on PATH runs this. It supports read-only and plan modes, anchored text
+edits, file and directory creation, recursive deletion, move/rename, and copy
+through revision-guarded preview and approval. It also runs approved commands,
+verifies completion, and asks before workspace effects unless explicitly
+automated. Driven end to end against local Qwen coder models.
 
 **Measured, as of 2026-08-04:**
 
@@ -277,20 +277,32 @@ Prefer the smallest ownership change. Re-run the narrow failing test first.
 At most two keyword-matched packs are included. Add one only after retained
 failures show a repeated, general error class, then rerun the same paired screen.
 
-## File deletion
+## Filesystem operations
 
-The text protocol and native tool surface both support:
+The text and native protocols expose the same first-class workspace operations:
 
 ```text
-DELETE path/to/obsolete-file.ts
+DELETE path/to/file-or-directory
+MKDIR path/to/new/directory
+MOVE source/path -> destination/path
+COPY source/path -> destination/path
+RENAME old/path -> new/path
 ```
 
-Forge previews the whole file as removed, asks for a deletion-specific approval,
-and rechecks the file revision immediately before removal. It deletes regular
-files only—never directories or final-component symlinks. Several explicit file
-deletions can be handled in one bounded model turn, while ordinary edit limits
-remain unchanged. Deleted content is retained for `forge undo`, which restores
-it only if the path has not been recreated since the session.
+`DELETE` can remove a file, symlink, empty directory, or bounded non-empty
+directory tree. `MOVE`, `COPY`, and `RENAME` accept files, directories, binary
+content, and symlinks without following them. A final symlink may be targeted
+as an entry; structured mutations never traverse a symlinked parent directory.
+Destinations must not already exist; replacement requires a separately visible
+`DELETE` first.
+
+Every operation is previewed before approval, revalidates exact source and
+destination snapshots before commit, and records each affected entry for
+binary-safe guarded `forge undo`. The repository root and protected metadata
+roots `.git`, `.forge`, and `.codex-bridge` cannot be targeted. First-class tree
+operations are bounded to 10,000 entries and 128 MiB of retained content. Larger
+or specialized operations require an explicitly approved `RUN` command and do
+not gain the same structured preview or per-entry undo guarantees.
 
 ## The shape
 

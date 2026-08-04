@@ -231,7 +231,9 @@ export class TextCodec implements Codec {
             ? { query: rest }
             : name === "list"
               ? { path: rest || "." }
-              : { path: rest };
+              : ["move", "copy", "rename"].includes(name)
+                ? pathPair(rest)
+                : { path: rest };
     const parsed = tool.schema.safeParse(args);
     if (!parsed.success) {
       this.repairs.add(`bad_directive:${name}`);
@@ -273,6 +275,19 @@ export class TextCodec implements Codec {
  * The result is a token array passed to `spawn` with `shell: false`, so there
  * is nothing for a `;` or a `$(...)` to mean.
  */
+function pathPair(text: string): Record<string, unknown> {
+  const arrow = /\s+->\s+/.exec(text);
+  if (arrow !== null && arrow.index > 0) {
+    const source = text.slice(0, arrow.index).trim();
+    const destination = text.slice(arrow.index + arrow[0].length).trim();
+    return { source, destination };
+  }
+  const tokens = splitArgv(text);
+  return tokens.length === 2
+    ? { source: tokens[0] ?? "", destination: tokens[1] ?? "" }
+    : { source: "", destination: "" };
+}
+
 export function splitArgv(text: string): string[] {
   const out: string[] = [];
   let current = "";

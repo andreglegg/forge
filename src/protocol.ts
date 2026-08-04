@@ -128,6 +128,9 @@ export function boundTurnIntent(
     readonly proposals: number;
     readonly runs: number;
     readonly mutations: number;
+    /** Bounded first-class filesystem calls: delete, mkdir, move, copy, rename. */
+    readonly filesystem?: number;
+    /** Backward-compatible alias used by older callers. */
     readonly deletes?: number;
   },
 ): BoundedTurn {
@@ -135,7 +138,7 @@ export function boundTurnIntent(
   const seen = new Set<string>();
   let runs = 0;
   let mutations = 0;
-  let deletions = 0;
+  let filesystemMutations = 0;
   let duplicates = 0;
   let dropped = 0;
   for (const proposal of turn.proposals) {
@@ -148,12 +151,15 @@ export function boundTurnIntent(
     seen.add(key);
     const isRun = proposal.kind === "call" && proposal.tool === "run";
     const isMutation = proposal.kind === "edit";
-    const isDelete = proposal.kind === "call" && proposal.tool === "delete";
+    const isFilesystemMutation =
+      proposal.kind === "call" &&
+      ["delete", "mkdir", "move", "copy", "rename"].includes(proposal.tool);
     if (
       accepted.length >= limits.proposals ||
       (isRun && runs >= limits.runs) ||
       (isMutation && mutations >= limits.mutations) ||
-      (isDelete && deletions >= (limits.deletes ?? limits.mutations))
+      (isFilesystemMutation &&
+        filesystemMutations >= (limits.filesystem ?? limits.deletes ?? limits.mutations))
     ) {
       dropped += 1;
       continue;
@@ -161,7 +167,7 @@ export function boundTurnIntent(
     accepted.push(proposal);
     if (isRun) runs += 1;
     if (isMutation) mutations += 1;
-    if (isDelete) deletions += 1;
+    if (isFilesystemMutation) filesystemMutations += 1;
   }
   if (dropped === 0) return { turn, dropped: 0, duplicates: 0, notice: null };
 
@@ -261,6 +267,34 @@ export const TOOLS: readonly ToolSpec[] = [
     textForm: "DELETE <path>",
   },
   {
+    name: "mkdir",
+    mutates: true,
+    schema: z.strictObject({ path: path_ }),
+    describe: (a) => `create directory ${String(a["path"])}`,
+    textForm: "MKDIR <path>",
+  },
+  {
+    name: "move",
+    mutates: true,
+    schema: z.strictObject({ source: path_, destination: path_ }),
+    describe: (a) => `move ${String(a["source"])} to ${String(a["destination"])}`,
+    textForm: "MOVE <source> -> <destination>",
+  },
+  {
+    name: "copy",
+    mutates: true,
+    schema: z.strictObject({ source: path_, destination: path_ }),
+    describe: (a) => `copy ${String(a["source"])} to ${String(a["destination"])}`,
+    textForm: "COPY <source> -> <destination>",
+  },
+  {
+    name: "rename",
+    mutates: true,
+    schema: z.strictObject({ source: path_, destination: path_ }),
+    describe: (a) => `rename ${String(a["source"])} to ${String(a["destination"])}`,
+    textForm: "RENAME <source> -> <destination>",
+  },
+  {
     name: "run",
     mutates: true,
     // A token array, never a shell string: nothing model-written reaches a
@@ -320,7 +354,8 @@ export function textProtocolPrompt(): string {
     "  >>>>>>> REPLACE",
     "",
     "To create a file, use CREATE instead of EDIT and leave the SEARCH side empty.",
-    "DELETE removes one regular file. It never removes a directory.",
+    "DELETE removes one file, symlink, or directory tree. Never delete the repository root.",
+    "MOVE, COPY, and RENAME use an exact absent destination; delete an old destination explicitly first.",
     // Reverted from a longer version. Adding eight lines about marker
     // collisions and anchor sizing made things measurably WORSE: the task it
     // targeted went from 2/3 to 0/3 and false successes rose from 1 to 6
@@ -357,6 +392,9 @@ export function renderProposal(proposal: ActionProposal): string {
     }
     if (proposal.tool === "search") {
       return `SEARCH ${String(args["query"] ?? "")}`;
+    }
+    if (["move", "copy", "rename"].includes(proposal.tool)) {
+      return `${proposal.tool.toUpperCase()} ${String(args["source"] ?? "")} -> ${String(args["destination"] ?? "")}`;
     }
     return `${proposal.tool.toUpperCase()} ${String(args["path"] ?? ".")}`;
   }

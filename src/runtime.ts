@@ -23,7 +23,7 @@
 
 import type { ActionProposal } from "./protocol.js";
 import { describeProposal, mutates } from "./protocol.js";
-import type { Preview, Workspace } from "./workspace.js";
+import type { EntryType, MutationOperation, Preview, Workspace } from "./workspace.js";
 
 // ---------------------------------------------------------------------------
 // Events and commands
@@ -65,6 +65,14 @@ export type RunEvent =
        * remain readable; unsafe legacy undo is refused by the CLI.
        */
       afterRevision?: string | null;
+      /** Rich metadata for first-class filesystem operations. Optional for legacy journals. */
+      operation?: MutationOperation;
+      entryType?: EntryType;
+      beforeMode?: number | null;
+      afterMode?: number | null;
+      action?: Preview["kind"];
+      rootPath?: string;
+      destinationPath?: string;
     }
   | { type: "run.finished"; seq: number; ok: boolean; summary: string }
   | { type: "run.reopened"; seq: number; reason: string }
@@ -348,7 +356,7 @@ export interface Effects {
    * a test, an ephemeral sandbox -- simply does not supply it, and the events
    * record `null` rather than a hash pointing at nothing.
    */
-  readonly retain?: (content: string) => string;
+  readonly retain?: (content: string | Buffer) => string;
 }
 
 /**
@@ -359,6 +367,21 @@ export interface Effects {
 /** Bounded, so a large file cannot crowd the prompt out of its own budget. */
 function clip(text: string, limit = 4000): string {
   return text.length <= limit ? text : `${text.slice(0, limit)}\n… truncated …`;
+}
+
+function mutationResult(preview: Preview): string {
+  switch (preview.kind) {
+    case "delete":
+      return `deleted ${preview.path}. The path no longer exists.`;
+    case "mkdir":
+      return `created directory ${preview.path}.`;
+    case "move":
+      return `moved ${preview.source ?? preview.path} to ${preview.destination ?? "the destination"}.`;
+    case "copy":
+      return `copied ${preview.source ?? preview.path} to ${preview.destination ?? "the destination"}.`;
+    case "edit":
+      return `applied ${preview.path}. It now contains:\n\n${clip(preview.after)}`;
+  }
 }
 
 function canonicalKey(proposal: ActionProposal): string {
@@ -640,12 +663,13 @@ export class Run {
       }
 
       let preview: Preview | null = null;
-      if (proposal.kind === "edit" || (proposal.kind === "call" && proposal.tool === "delete")) {
+      if (
+        proposal.kind === "edit" ||
+        (proposal.kind === "call" &&
+          ["delete", "mkdir", "move", "copy", "rename"].includes(proposal.tool))
+      ) {
         try {
-          preview =
-            proposal.kind === "edit"
-              ? this.effects.workspace.preview(proposal)
-              : this.effects.workspace.previewDelete(String(proposal.arguments["path"] ?? ""));
+          preview = this.previewMutation(proposal);
         } catch (error) {
           // A mutation that cannot be previewed cannot be approved. The reason
           // goes back to the model, which is how it corrects the target.
@@ -674,6 +698,23 @@ export class Run {
 
       this.emit({ type: "action.started", id, summary });
       if (preview !== null) {
+        // Retain destructive inputs before commit. Content-addressed orphan
+        // blobs are harmless; deleting data and only then discovering that the
+        // undo store is unavailable is not.
+        const retainedRevisions = new Map<string, string | null>();
+        try {
+          for (const [relative, bytes] of preview.retained) {
+            retainedRevisions.set(relative, this.effects.retain?.(bytes) ?? null);
+          }
+        } catch (error) {
+          failedThisTurn = true;
+          this.report(results, {
+            id,
+            ok: false,
+            output: `could not retain undo data, so the mutation was not applied: ${error instanceof Error ? error.message : String(error)}`,
+          });
+          continue;
+        }
         try {
           this.effects.workspace.commit(preview);
         } catch (error) {
@@ -687,30 +728,30 @@ export class Run {
         }
         this.guard.recordMutation();
         committedThisTurn = true;
-        // Stored *after* the commit succeeded. Storing first would leave a blob
-        // for an edit that never landed, and undo would then offer to restore
-        // a file to a state it was never moved away from.
-        const beforeRevision = this.effects.retain?.(preview.before) ?? null;
-        this.emit({
-          type: "mutation.committed",
-          id,
-          path: preview.path,
-          added: preview.added,
-          removed: preview.removed,
-          beforeRevision: preview.create ? null : beforeRevision,
-          afterRevision: preview.afterRevision,
-        });
-        // Hand back an authoritative postcondition. For edits that is the
-        // resulting file; for deletion it is explicit absence. Without this,
-        // weak models repeat a mutation because they cannot tell that it landed.
-        this.report(results, {
-          id,
-          ok: true,
-          output:
-            preview.kind === "delete"
-              ? `deleted ${preview.path}. The file no longer exists.`
-              : `applied ${preview.path}. It now contains:\n\n${clip(preview.after)}`,
-        });
+        // Each entry receives its own event so move/copy trees can be undone in
+        // exact reverse order without relying on Git or text-only snapshots.
+        for (const change of preview.changes) {
+          const retainedRevision = preview.retained.has(change.path)
+            ? (retainedRevisions.get(change.path) ?? null)
+            : change.beforeRevision;
+          this.emit({
+            type: "mutation.committed",
+            id,
+            path: change.path,
+            added: change.added,
+            removed: change.removed,
+            beforeRevision: retainedRevision,
+            afterRevision: change.afterRevision,
+            operation: change.operation,
+            entryType: change.entryType,
+            beforeMode: change.beforeMode,
+            afterMode: change.afterMode,
+            action: preview.kind,
+            rootPath: preview.path,
+            ...(preview.destination === undefined ? {} : { destinationPath: preview.destination }),
+          });
+        }
+        this.report(results, { id, ok: true, output: mutationResult(preview) });
         continue;
       }
       const result = await this.effects.runTool(proposal);
@@ -742,6 +783,26 @@ export class Run {
     }
     this.emit({ type: "run.finished", ok: true, summary: turn.final });
     return { results, finished: true };
+  }
+
+  private previewMutation(proposal: ActionProposal): Preview {
+    if (proposal.kind === "edit") return this.effects.workspace.preview(proposal);
+    const args = proposal.arguments;
+    if (proposal.tool === "delete") {
+      return this.effects.workspace.previewDelete(String(args["path"] ?? ""));
+    }
+    if (proposal.tool === "mkdir") {
+      return this.effects.workspace.previewMkdir(String(args["path"] ?? ""));
+    }
+    const source = String(args["source"] ?? "");
+    const destination = String(args["destination"] ?? "");
+    if (proposal.tool === "copy") {
+      return this.effects.workspace.previewCopy(source, destination);
+    }
+    if (proposal.tool === "move" || proposal.tool === "rename") {
+      return this.effects.workspace.previewMove(source, destination);
+    }
+    throw new Error(`the ${proposal.tool} tool is not a previewed filesystem mutation`);
   }
 
   /** Emit an action result and record it for the caller in one place. */
@@ -801,8 +862,8 @@ export class Run {
     const klass =
       proposal.kind === "edit"
         ? "edit"
-        : proposal.tool === "delete"
-          ? "delete"
+        : ["delete", "mkdir", "move", "copy", "rename"].includes(proposal.tool)
+          ? `filesystem:${proposal.tool}`
           : `run:${proposal.tool}`;
     if (this.autoApprove || this.policy.allows(klass)) {
       return "once";

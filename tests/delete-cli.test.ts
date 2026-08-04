@@ -122,7 +122,11 @@ describe("delete CLI regression", () => {
         ],
       },
     });
-    expect(scripted.reviewRequest()).toContain("src/game.ts — deleted; the path no longer exists");
-    expect(scripted.reviewRequest()).toContain("src/index.ts — deleted; the path no longer exists");
+    expect(scripted.reviewRequest()).toContain(
+      "src/game.ts — deleted or moved away; the path no longer exists",
+    );
+    expect(scripted.reviewRequest()).toContain(
+      "src/index.ts — deleted or moved away; the path no longer exists",
+    );
   }, 30_000);
 });

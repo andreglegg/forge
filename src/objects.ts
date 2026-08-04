@@ -27,16 +27,20 @@ import path from "node:path";
 
 export const OBJECTS_SUBDIRECTORY = path.join(".forge", "objects");
 
+export function hashOfBytes(content: Buffer): string {
+  return createHash("sha256").update(content).digest("hex");
+}
+
 export function hashOf(content: string): string {
-  return createHash("sha256").update(content, "utf8").digest("hex");
+  return hashOfBytes(Buffer.from(content, "utf8"));
 }
 
 /**
  * Write content and return its hash. Idempotent: storing the same bytes twice
  * is a no-op, which is what makes the "unchanged header" case free.
  */
-export function store(root: string, content: string): string {
-  const hash = hashOf(content);
+export function storeBytes(root: string, content: Buffer): string {
+  const hash = hashOfBytes(content);
   const file = fileFor(root, hash);
   if (existsSync(file)) {
     return hash;
@@ -45,9 +49,13 @@ export function store(root: string, content: string): string {
   // Temp-then-rename, so a reader can never observe a partially written blob
   // under a name that claims to be the hash of complete content.
   const temporary = `${file}.tmp`;
-  writeFileSync(temporary, content, "utf8");
+  writeFileSync(temporary, content);
   renameSync(temporary, file);
   return hash;
+}
+
+export function store(root: string, content: string): string {
+  return storeBytes(root, Buffer.from(content, "utf8"));
 }
 
 /**
@@ -57,15 +65,19 @@ export function store(root: string, content: string): string {
  * file, which is worth reporting precisely, not worth taking down the whole
  * undo of everything else that is recoverable.
  */
-export function load(root: string, hash: string): string | null {
+export function loadBytes(root: string, hash: string): Buffer | null {
   if (!/^[0-9a-f]{64}$/.test(hash)) {
     return null;
   }
   try {
-    return readFileSync(fileFor(root, hash), "utf8");
+    return readFileSync(fileFor(root, hash));
   } catch {
     return null;
   }
+}
+
+export function load(root: string, hash: string): string | null {
+  return loadBytes(root, hash)?.toString("utf8") ?? null;
 }
 
 /**

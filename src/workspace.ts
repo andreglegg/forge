@@ -23,14 +23,17 @@
 
 import { createHash, randomUUID } from "node:crypto";
 import {
-  existsSync,
+  chmodSync,
+  cpSync,
   lstatSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
+  readlinkSync,
   realpathSync,
   renameSync,
+  rmdirSync,
   rmSync,
-  statSync,
   writeFileSync,
 } from "node:fs";
 import path from "node:path";
@@ -57,7 +60,7 @@ export function revisionOfContent(content: string): string {
   return revisionOfBytes(Buffer.from(content, "utf8"));
 }
 
-function revisionOfBytes(content: Buffer): string {
+export function revisionOfBytes(content: Buffer): string {
   return createHash("sha256").update(content).digest("hex");
 }
 
@@ -127,9 +130,38 @@ export interface Hunk {
   readonly text: string;
 }
 
-export interface Preview {
-  readonly kind: "edit" | "delete";
+export type EntryType = "file" | "directory" | "symlink";
+export type MutationOperation = "create" | "write" | "delete";
+
+export interface MutationChange {
+  readonly operation: MutationOperation;
+  readonly entryType: EntryType;
   readonly path: string;
+  readonly beforeRevision: string | null;
+  readonly afterRevision: string | null;
+  readonly beforeMode: number | null;
+  readonly afterMode: number | null;
+  readonly added: number;
+  readonly removed: number;
+}
+
+interface EntrySnapshot {
+  readonly path: string;
+  readonly entryType: EntryType;
+  readonly revision: string | null;
+  readonly mode: number;
+}
+
+interface PreviewGuard {
+  readonly path: string;
+  readonly expected: readonly EntrySnapshot[] | null;
+}
+
+export interface Preview {
+  readonly kind: "edit" | "delete" | "mkdir" | "move" | "copy";
+  readonly path: string;
+  readonly source?: string;
+  readonly destination?: string;
   readonly create: boolean;
   readonly baseRevision: string | null;
   readonly afterRevision: string | null;
@@ -138,6 +170,249 @@ export interface Preview {
   readonly hunks: Hunk[];
   readonly added: number;
   readonly removed: number;
+  readonly changes: readonly MutationChange[];
+  readonly guards: readonly PreviewGuard[];
+  readonly createdParents: readonly string[];
+  /** Binary-safe bytes retained for delete/move undo. Maps serialize as `{}` in journals. */
+  readonly retained: ReadonlyMap<string, Buffer>;
+}
+
+const PROTECTED_ROOTS = new Set([".git", ".forge", ".codex-bridge"]);
+const MAX_TREE_ENTRIES = 10_000;
+const MAX_TREE_BYTES = 128 * 1024 * 1024;
+
+interface CapturedTree {
+  readonly entries: readonly EntrySnapshot[];
+  readonly retained: ReadonlyMap<string, Buffer>;
+}
+
+function normalizeMutationPath(
+  root: string,
+  candidate: string,
+): { relative: string; absolute: string } {
+  if (!candidate || candidate.includes("\0")) {
+    throw new WorkspaceError(`${candidate || "the empty path"} is outside the workspace`);
+  }
+  if (/^[A-Za-z]:/.test(candidate) || /^[\\/]{2}[^\\/]+[\\/]/.test(candidate)) {
+    throw new WorkspaceError(`${candidate} is outside the workspace`);
+  }
+  const relative = path.posix.normalize(candidate.replaceAll("\\", "/"));
+  if (relative === "." || relative === "" || relative === ".." || relative.startsWith("../")) {
+    throw new WorkspaceError("the repository root cannot be changed by a filesystem directive");
+  }
+  const first = relative.split("/")[0] ?? "";
+  if (PROTECTED_ROOTS.has(first)) {
+    throw new WorkspaceError(`${relative} is protected repository metadata`);
+  }
+  const parent = path.posix.dirname(relative);
+  if (parent !== ".") {
+    let current = root;
+    let currentRelative = "";
+    for (const part of parent.split("/").filter(Boolean)) {
+      current = path.join(current, part);
+      currentRelative = currentRelative ? `${currentRelative}/${part}` : part;
+      if (!entryExists(current)) break;
+      const stat = lstatSync(current);
+      if (stat.isSymbolicLink()) {
+        throw new WorkspaceError(
+          `${relative} traverses symbolic-link parent ${currentRelative}; target the link or its real path explicitly`,
+        );
+      }
+      if (!stat.isDirectory()) {
+        throw new WorkspaceError(`${currentRelative} is not a real directory`);
+      }
+    }
+  }
+  const absolute = path.resolve(root, relative);
+  const escaped = path.relative(root, absolute);
+  if (escaped === ".." || escaped.startsWith(`..${path.sep}`) || path.isAbsolute(escaped)) {
+    throw new WorkspaceError(`${relative} is outside the workspace`);
+  }
+  if (parent !== "." && resolveInside(root, parent) === null) {
+    throw new WorkspaceError(`${relative} is outside the workspace`);
+  }
+  return { relative, absolute };
+}
+
+function entryExists(target: string): boolean {
+  try {
+    lstatSync(target);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function depthOf(relative: string): number {
+  return relative.split("/").filter(Boolean).length;
+}
+
+function entryTypeOf(target: string): EntryType {
+  const stat = lstatSync(target);
+  if (stat.isSymbolicLink()) return "symlink";
+  if (stat.isDirectory()) return "directory";
+  if (stat.isFile()) return "file";
+  throw new WorkspaceError(`${target} is not a regular file, directory, or symlink`);
+}
+
+function captureTree(root: string, relativeInput: string): CapturedTree {
+  const { relative, absolute } = normalizeMutationPath(root, relativeInput);
+  if (!entryExists(absolute)) {
+    throw new WorkspaceError(`${relative} does not exist`);
+  }
+  const entries: EntrySnapshot[] = [];
+  const retained = new Map<string, Buffer>();
+  let totalBytes = 0;
+  const visit = (entryRelative: string, entryAbsolute: string): void => {
+    if (entries.length >= MAX_TREE_ENTRIES) {
+      throw new WorkspaceError(
+        `${relative} contains more than ${MAX_TREE_ENTRIES} entries; use an explicitly approved command for a larger operation`,
+      );
+    }
+    const type = entryTypeOf(entryAbsolute);
+    const stat = lstatSync(entryAbsolute);
+    const mode = stat.mode & 0o7777;
+    if (type === "directory") {
+      entries.push({ path: entryRelative, entryType: type, revision: null, mode });
+      for (const name of readdirSync(entryAbsolute).sort()) {
+        visit(path.posix.join(entryRelative, name), path.join(entryAbsolute, name));
+      }
+      return;
+    }
+    const bytes =
+      type === "symlink"
+        ? Buffer.from(readlinkSync(entryAbsolute), "utf8")
+        : readFileSync(entryAbsolute);
+    totalBytes += bytes.length;
+    if (totalBytes > MAX_TREE_BYTES) {
+      throw new WorkspaceError(
+        `${relative} contains more than ${Math.floor(MAX_TREE_BYTES / (1024 * 1024))} MiB; use an explicitly approved command for a larger operation`,
+      );
+    }
+    retained.set(entryRelative, bytes);
+    entries.push({
+      path: entryRelative,
+      entryType: type,
+      revision: revisionOfBytes(bytes),
+      mode,
+    });
+  };
+  visit(relative, absolute);
+  return { entries, retained };
+}
+
+function snapshotsEqual(
+  left: readonly EntrySnapshot[] | null,
+  right: readonly EntrySnapshot[] | null,
+): boolean {
+  const canonical = (value: readonly EntrySnapshot[] | null): readonly EntrySnapshot[] | null =>
+    value === null
+      ? null
+      : [...value].sort(
+          (a, b) => a.path.localeCompare(b.path) || a.entryType.localeCompare(b.entryType),
+        );
+  return JSON.stringify(canonical(left)) === JSON.stringify(canonical(right));
+}
+
+function captureMaybe(root: string, relative: string): readonly EntrySnapshot[] | null {
+  const { absolute } = normalizeMutationPath(root, relative);
+  return entryExists(absolute) ? captureTree(root, relative).entries : null;
+}
+
+function asDeleteChanges(entries: readonly EntrySnapshot[]): MutationChange[] {
+  const leaves = entries
+    .filter((entry) => entry.entryType !== "directory")
+    .sort((a, b) => a.path.localeCompare(b.path));
+  const directories = entries
+    .filter((entry) => entry.entryType === "directory")
+    .sort((a, b) => depthOf(b.path) - depthOf(a.path) || a.path.localeCompare(b.path));
+  return [...leaves, ...directories].map((entry) => ({
+    operation: "delete" as const,
+    entryType: entry.entryType,
+    path: entry.path,
+    beforeRevision: entry.revision,
+    afterRevision: null,
+    beforeMode: entry.mode,
+    afterMode: null,
+    added: 0,
+    removed: 1,
+  }));
+}
+
+function asCreateChanges(entries: readonly EntrySnapshot[]): MutationChange[] {
+  const directories = entries
+    .filter((entry) => entry.entryType === "directory")
+    .sort((a, b) => depthOf(a.path) - depthOf(b.path) || a.path.localeCompare(b.path));
+  const leaves = entries
+    .filter((entry) => entry.entryType !== "directory")
+    .sort((a, b) => a.path.localeCompare(b.path));
+  return [...directories, ...leaves].map((entry) => ({
+    operation: "create" as const,
+    entryType: entry.entryType,
+    path: entry.path,
+    beforeRevision: null,
+    afterRevision: entry.revision,
+    beforeMode: null,
+    afterMode: entry.mode,
+    added: 1,
+    removed: 0,
+  }));
+}
+
+function remapEntries(
+  entries: readonly EntrySnapshot[],
+  sourceRoot: string,
+  destinationRoot: string,
+): EntrySnapshot[] {
+  return entries.map((entry) => {
+    const suffix = entry.path === sourceRoot ? "" : entry.path.slice(sourceRoot.length + 1);
+    return {
+      ...entry,
+      path: suffix ? path.posix.join(destinationRoot, suffix) : destinationRoot,
+    };
+  });
+}
+
+function manifestHunks(changes: readonly MutationChange[]): Hunk[] {
+  return changes.map((change) => ({
+    kind: change.operation === "delete" ? ("remove" as const) : ("add" as const),
+    text: `${change.entryType} ${change.path}`,
+  }));
+}
+
+function missingParentDirectories(root: string, targetRelative: string): string[] {
+  const parent = path.posix.dirname(targetRelative);
+  if (parent === ".") return [];
+  const parts = parent.split("/").filter(Boolean);
+  const missing: string[] = [];
+  let current = "";
+  for (const part of parts) {
+    current = current ? `${current}/${part}` : part;
+    const { absolute } = normalizeMutationPath(root, current);
+    if (!entryExists(absolute)) {
+      missing.push(current);
+      continue;
+    }
+    const stat = lstatSync(absolute);
+    if (stat.isSymbolicLink() || !stat.isDirectory()) {
+      throw new WorkspaceError(`${current} is not a real directory`);
+    }
+  }
+  return missing;
+}
+
+function directoryCreateChange(relative: string): MutationChange {
+  return {
+    operation: "create",
+    entryType: "directory",
+    path: relative,
+    beforeRevision: null,
+    afterRevision: null,
+    beforeMode: null,
+    afterMode: 0o755,
+    added: 1,
+    removed: 0,
+  };
 }
 
 export class Workspace {
@@ -165,16 +440,21 @@ export class Workspace {
    * the anchor. The messages here are model-facing.
    */
   preview(proposal: EditProposal): Preview {
-    const target = resolveInside(this.root, proposal.path);
-    if (target === null) {
-      throw new WorkspaceError(`${proposal.path} is outside the workspace`);
-    }
-    const exists = existsSync(target);
+    const { relative, absolute: target } = normalizeMutationPath(this.root, proposal.path);
+    const exists = entryExists(target);
     if (proposal.create && exists) {
-      throw new WorkspaceError(`${proposal.path} already exists; edit it instead of creating it`);
+      throw new WorkspaceError(`${relative} already exists; edit it instead of creating it`);
     }
     if (!proposal.create && !exists) {
-      throw new WorkspaceError(`${proposal.path} does not exist; use CREATE to add it`);
+      throw new WorkspaceError(`${relative} does not exist; use CREATE to add it`);
+    }
+    if (exists) {
+      const stat = lstatSync(target);
+      if (stat.isSymbolicLink() || !stat.isFile()) {
+        throw new WorkspaceError(
+          `${relative} is not a regular file; use a filesystem directive instead`,
+        );
+      }
     }
     const beforeBytes = exists ? readFileSync(target) : null;
     const before = beforeBytes?.toString("utf8") ?? "";
@@ -190,12 +470,12 @@ export class Workspace {
       const found = countOf(after, operation.search);
       if (found === 0) {
         throw new WorkspaceError(
-          `the search text was not found in ${proposal.path}. Read the file again and quote it exactly.`,
+          `the search text was not found in ${relative}. Read the file again and quote it exactly.`,
         );
       }
       if (found !== operation.expectedMatches) {
         throw new WorkspaceError(
-          `the search text appears ${found} times in ${proposal.path}, expected ${operation.expectedMatches}. Include more surrounding lines so the anchor is unique.`,
+          `the search text appears ${found} times in ${relative}, expected ${operation.expectedMatches}. Include more surrounding lines so the anchor is unique.`,
         );
       }
       after = after.replace(operation.search, () => operation.replace);
@@ -207,117 +487,365 @@ export class Workspace {
       // shape the rest of this package exists to catch. Seen in a real run as
       // `committed src/math.js +0 -0`.
       throw new WorkspaceError(
-        `that edit would leave ${proposal.path} unchanged. If the change is already there, say so instead of re-applying it.`,
+        `that edit would leave ${relative} unchanged. If the change is already there, say so instead of re-applying it.`,
       );
     }
     const hunks = diffLines(before, after);
+    const baseRevision = beforeBytes === null ? null : revisionOfBytes(beforeBytes);
+    const afterRevision = revisionOfContent(after);
+    const mode = exists ? lstatSync(target).mode & 0o7777 : 0o644;
+    const added = hunks.filter((h) => h.kind === "add").length;
+    const removed = hunks.filter((h) => h.kind === "remove").length;
+    const createdParents = proposal.create ? missingParentDirectories(this.root, relative) : [];
+    const fileChange: MutationChange = {
+      operation: proposal.create ? "create" : "write",
+      entryType: "file",
+      path: relative,
+      beforeRevision: baseRevision,
+      afterRevision,
+      beforeMode: proposal.create ? null : mode,
+      afterMode: mode,
+      added,
+      removed,
+    };
     return {
       kind: "edit",
-      path: proposal.path,
+      path: relative,
       create: proposal.create,
       // Hash the bytes already read rather than opening the file again. A
       // second read could observe a concurrent save and pair that new hash
       // with a diff generated from the old contents.
-      baseRevision: beforeBytes === null ? null : revisionOfBytes(beforeBytes),
-      afterRevision: revisionOfContent(after),
+      baseRevision,
+      afterRevision,
       before,
       after,
       hunks,
-      added: hunks.filter((h) => h.kind === "add").length,
-      removed: hunks.filter((h) => h.kind === "remove").length,
+      added,
+      removed,
+      changes: proposal.create
+        ? [...createdParents.map(directoryCreateChange), fileChange]
+        : [fileChange],
+      guards: [
+        {
+          path: relative,
+          expected: proposal.create
+            ? null
+            : [{ path: relative, entryType: "file", revision: baseRevision, mode }],
+        },
+        ...createdParents.map((created) => ({ path: created, expected: null })),
+      ],
+      createdParents,
+      retained: beforeBytes === null ? new Map() : new Map([[relative, beforeBytes]]),
     };
   }
 
-  /**
-   * Preview deletion of one regular file. Directories and final-component
-   * symlinks are deliberately excluded: recursive removal is too broad for a
-   * one-line model directive, and deleting through a symlink can target a file
-   * other than the path the user approved.
-   */
-  previewDelete(relative: string): Preview {
-    const target = resolveInside(this.root, relative);
-    if (target === null) {
-      throw new WorkspaceError(`${relative} is outside the workspace`);
-    }
-    const lexical = path.resolve(this.root, relative.replaceAll("\\", "/"));
-    if (!existsSync(lexical)) {
-      throw new WorkspaceError(`${relative} does not exist`);
-    }
-    if (lstatSync(lexical).isSymbolicLink()) {
-      throw new WorkspaceError(`${relative} is a symbolic link; Forge deletes regular files only`);
-    }
-    if (!statSync(target).isFile()) {
-      throw new WorkspaceError(
-        `${relative} is not a regular file; Forge does not delete directories`,
-      );
-    }
-    const beforeBytes = readFileSync(target);
-    const before = beforeBytes.toString("utf8");
-    const hunks = diffLines(before, "");
+  /** Preview deletion of one file, symlink, or bounded directory tree. */
+  previewDelete(relativeInput: string): Preview {
+    const { relative } = normalizeMutationPath(this.root, relativeInput);
+    const captured = captureTree(this.root, relative);
+    const changes = asDeleteChanges(captured.entries);
+    const only = captured.entries.length === 1 ? captured.entries[0] : undefined;
+    const beforeBytes = only?.entryType === "file" ? captured.retained.get(relative) : undefined;
+    const before = beforeBytes?.toString("utf8") ?? "";
+    const hunks = beforeBytes === undefined ? manifestHunks(changes) : diffLines(before, "");
     return {
       kind: "delete",
       path: relative,
       create: false,
-      baseRevision: revisionOfBytes(beforeBytes),
+      baseRevision: only?.revision ?? null,
       afterRevision: null,
       before,
       after: "",
       hunks,
       added: 0,
-      removed: hunks.filter((h) => h.kind === "remove").length,
+      removed: hunks.filter((hunk) => hunk.kind === "remove").length,
+      changes,
+      guards: [{ path: relative, expected: captured.entries }],
+      createdParents: [],
+      retained: captured.retained,
     };
   }
 
-  /**
-   * Apply a previewed mutation, refusing if the file moved underneath it.
-   *
-   * The write is temp-file-then-rename, which is the same POSIX `rename(2)`
-   * the rest of the world relies on: a crash mid-write leaves the previous
-   * file intact rather than a truncated one.
-   */
-  commit(preview: Preview): void {
-    const target = resolveInside(this.root, preview.path);
-    if (target === null) {
-      throw new WorkspaceError(`${preview.path} is outside the workspace`);
+  /** Preview recursive directory creation, recording only missing components. */
+  previewMkdir(relativeInput: string): Preview {
+    const { relative, absolute } = normalizeMutationPath(this.root, relativeInput);
+    if (entryExists(absolute)) {
+      throw new WorkspaceError(`${relative} already exists`);
     }
-    const current = revisionOf(target);
-    if (current !== preview.baseRevision) {
-      const mutation = preview.kind === "delete" ? "deletion" : "edit";
+    const createdParents = [...missingParentDirectories(this.root, relative), relative];
+    const changes = createdParents.map(directoryCreateChange);
+    const hunks = manifestHunks(changes);
+    return {
+      kind: "mkdir",
+      path: relative,
+      create: true,
+      baseRevision: null,
+      afterRevision: null,
+      before: "",
+      after: "",
+      hunks,
+      added: changes.length,
+      removed: 0,
+      changes,
+      guards: createdParents.map((created) => ({ path: created, expected: null })),
+      createdParents,
+      retained: new Map(),
+    };
+  }
+
+  previewMove(sourceInput: string, destinationInput: string): Preview {
+    return this.previewTransfer("move", sourceInput, destinationInput);
+  }
+
+  previewCopy(sourceInput: string, destinationInput: string): Preview {
+    return this.previewTransfer("copy", sourceInput, destinationInput);
+  }
+
+  private previewTransfer(
+    kind: "move" | "copy",
+    sourceInput: string,
+    destinationInput: string,
+  ): Preview {
+    const { relative: source } = normalizeMutationPath(this.root, sourceInput);
+    const { relative: destination, absolute: destinationAbsolute } = normalizeMutationPath(
+      this.root,
+      destinationInput,
+    );
+    if (source === destination) {
+      throw new WorkspaceError("source and destination are the same path");
+    }
+    if (entryExists(destinationAbsolute)) {
       throw new WorkspaceError(
-        `${preview.path} changed after it was approved, so the ${mutation} was not applied. Read it again.`,
+        `${destination} already exists; delete it explicitly before replacing it`,
       );
     }
-    if (preview.kind === "delete") {
-      if (!existsSync(target) || !statSync(target).isFile()) {
-        throw new WorkspaceError(
-          `${preview.path} changed after it was approved, so the deletion was not applied. Read it again.`,
-        );
-      }
-      // Re-check immediately before removal. This mirrors the edit path's
-      // second revision check immediately before its atomic rename.
-      if (revisionOf(target) !== preview.baseRevision) {
-        throw new WorkspaceError(
-          `${preview.path} changed after it was approved, so the deletion was not applied. Read it again.`,
-        );
-      }
-      rmSync(target);
+    const captured = captureTree(this.root, source);
+    if (captured.entries[0]?.entryType === "directory" && destination.startsWith(`${source}/`)) {
+      throw new WorkspaceError(`cannot ${kind} ${source} inside itself`);
+    }
+    const destinationEntries = remapEntries(captured.entries, source, destination);
+    const createdParents = missingParentDirectories(this.root, destination);
+    const parentChanges = createdParents.map(directoryCreateChange);
+    const destinationChanges = asCreateChanges(destinationEntries);
+    const changes =
+      kind === "move"
+        ? [...asDeleteChanges(captured.entries), ...parentChanges, ...destinationChanges]
+        : [...parentChanges, ...destinationChanges];
+    const hunks = manifestHunks(changes);
+    return {
+      kind,
+      path: source,
+      source,
+      destination,
+      create: kind === "copy",
+      baseRevision: captured.entries[0]?.revision ?? null,
+      afterRevision: destinationEntries[0]?.revision ?? null,
+      before: "",
+      after: "",
+      hunks,
+      added: hunks.filter((hunk) => hunk.kind === "add").length,
+      removed: hunks.filter((hunk) => hunk.kind === "remove").length,
+      changes,
+      guards: [
+        { path: source, expected: captured.entries },
+        { path: destination, expected: null },
+        ...createdParents.map((created) => ({ path: created, expected: null })),
+      ],
+      createdParents,
+      retained: kind === "move" ? captured.retained : new Map(),
+    };
+  }
+
+  /** Apply a previously approved mutation plan after exact snapshot revalidation. */
+  commit(preview: Preview): void {
+    this.assertGuards(preview);
+    if (preview.kind === "edit") {
+      this.commitEdit(preview);
       return;
     }
-    mkdirSync(path.dirname(target), { recursive: true });
-    const temporary = `${target}.forge-tmp-${randomUUID()}`;
-    try {
-      writeFileSync(temporary, preview.after, "utf8");
-      // Writing the temporary file can take long enough for an editor or
-      // formatter to save the target. Re-check immediately before the atomic
-      // replace so that change is not overwritten.
-      if (revisionOf(target) !== preview.baseRevision) {
+    if (preview.kind === "delete") {
+      this.commitDelete(preview);
+      return;
+    }
+    if (preview.kind === "mkdir") {
+      this.commitMkdir(preview);
+      return;
+    }
+    this.commitTransfer(preview);
+  }
+
+  private assertGuards(preview: Preview, guards: readonly PreviewGuard[] = preview.guards): void {
+    for (const guard of guards) {
+      let current: readonly EntrySnapshot[] | null;
+      try {
+        current = captureMaybe(this.root, guard.path);
+      } catch {
         throw new WorkspaceError(
-          `${preview.path} changed after it was approved, so the edit was not applied. Read it again.`,
+          `${guard.path} changed after it was approved, so the ${preview.kind} was not applied. Read or list it again.`,
         );
       }
+      if (!snapshotsEqual(current, guard.expected)) {
+        throw new WorkspaceError(
+          `${guard.path} changed after it was approved, so the ${preview.kind} was not applied. Read or list it again.`,
+        );
+      }
+    }
+  }
+
+  private commitEdit(preview: Preview): void {
+    const { absolute: target } = normalizeMutationPath(this.root, preview.path);
+    const createdParents: string[] = [];
+    const temporary = `${target}.forge-tmp-${randomUUID()}`;
+    try {
+      for (const relative of preview.createdParents) {
+        const { absolute } = normalizeMutationPath(this.root, relative);
+        mkdirSync(absolute, { mode: 0o755 });
+        createdParents.push(absolute);
+      }
+      writeFileSync(temporary, preview.after, "utf8");
+      // Parent guards were intentionally changed by the mkdirs above. The
+      // target itself must still be exactly the file/absence the user approved.
+      this.assertGuards(preview, preview.guards.slice(0, 1));
       renameSync(temporary, target);
+      const mode = preview.changes.find(
+        (change) => change.path === preview.path && change.entryType === "file",
+      )?.afterMode;
+      if (mode !== null && mode !== undefined) chmodSync(target, mode);
+    } catch (error) {
+      for (const absolute of createdParents.reverse()) {
+        try {
+          rmdirSync(absolute);
+        } catch {
+          // A non-empty parent may now contain concurrent user work and stays.
+        }
+      }
+      throw error;
     } finally {
       rmSync(temporary, { force: true });
+    }
+  }
+
+  private commitDelete(preview: Preview): void {
+    const { absolute: source } = normalizeMutationPath(this.root, preview.path);
+    // Stage beside the source so rename is same-filesystem and cannot be
+    // redirected through a repository-controlled `.forge` symlink.
+    const staged = `${source}.forge-delete-${randomUUID()}`;
+    const stagedRelative = path.relative(this.root, staged).split(path.sep).join("/");
+    renameSync(source, staged);
+    try {
+      const expected = preview.guards[0]?.expected;
+      const stagedExpected =
+        expected === null || expected === undefined
+          ? expected
+          : remapEntries(expected, preview.path, stagedRelative);
+      if (!snapshotsEqual(captureTree(this.root, stagedRelative).entries, stagedExpected ?? null)) {
+        throw new WorkspaceError(
+          `${preview.path} changed while it was being deleted; the deletion was rolled back`,
+        );
+      }
+      rmSync(staged, { recursive: true, force: true });
+    } catch (error) {
+      if (!entryExists(source) && entryExists(staged)) renameSync(staged, source);
+      throw error;
+    }
+  }
+
+  private commitMkdir(preview: Preview): void {
+    const created: string[] = [];
+    try {
+      for (const relative of preview.createdParents) {
+        const { absolute } = normalizeMutationPath(this.root, relative);
+        mkdirSync(absolute, { mode: 0o755 });
+        created.push(absolute);
+      }
+    } catch (error) {
+      for (const absolute of created.reverse()) {
+        try {
+          rmdirSync(absolute);
+        } catch {
+          // Preserve a non-empty directory that may contain concurrent work.
+        }
+      }
+      throw error;
+    }
+  }
+
+  private commitTransfer(preview: Preview): void {
+    const sourceRelative = preview.source;
+    const destinationRelative = preview.destination;
+    if (sourceRelative === undefined || destinationRelative === undefined) {
+      throw new WorkspaceError(`${preview.kind} preview is missing source or destination`);
+    }
+    const { absolute: source } = normalizeMutationPath(this.root, sourceRelative);
+    const { absolute: destination } = normalizeMutationPath(this.root, destinationRelative);
+    const createdParents: string[] = [];
+    try {
+      for (const relative of preview.createdParents) {
+        const { absolute } = normalizeMutationPath(this.root, relative);
+        mkdirSync(absolute, { mode: 0o755 });
+        createdParents.push(absolute);
+      }
+      if (preview.kind === "move") {
+        renameSync(source, destination);
+      } else {
+        cpSync(source, destination, {
+          recursive: true,
+          dereference: false,
+          errorOnExist: true,
+          force: false,
+          preserveTimestamps: true,
+          verbatimSymlinks: true,
+        });
+      }
+      const expectedDestination = preview.changes
+        .filter(
+          (change) =>
+            change.operation === "create" &&
+            (change.path === destinationRelative ||
+              change.path.startsWith(`${destinationRelative}/`)),
+        )
+        .map((change) => ({
+          path: change.path,
+          entryType: change.entryType,
+          revision: change.afterRevision,
+          mode: change.afterMode ?? 0,
+        }));
+      const destinationMatches = snapshotsEqual(
+        captureMaybe(this.root, destinationRelative),
+        expectedDestination,
+      );
+      const sourceMatches =
+        preview.kind === "move"
+          ? captureMaybe(this.root, sourceRelative) === null
+          : snapshotsEqual(
+              captureMaybe(this.root, sourceRelative),
+              preview.guards[0]?.expected ?? null,
+            );
+      if (!destinationMatches || !sourceMatches) {
+        throw new WorkspaceError(
+          `${preview.kind} changed while it was being committed; the operation was rolled back`,
+        );
+      }
+    } catch (error) {
+      if (preview.kind === "move") {
+        if (!entryExists(source) && entryExists(destination)) {
+          try {
+            renameSync(destination, source);
+          } catch {
+            // Preserve the original causal error. The destination remains visible.
+          }
+        }
+      } else {
+        rmSync(destination, { recursive: true, force: true });
+      }
+      for (const absolute of createdParents.reverse()) {
+        try {
+          rmdirSync(absolute);
+        } catch {
+          // A non-empty parent now contains user work and must stay.
+        }
+      }
+      throw error;
     }
   }
 

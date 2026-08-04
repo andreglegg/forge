@@ -90,6 +90,11 @@ export function useColor(isTty: boolean, env: Record<string, string | undefined>
   return isTty;
 }
 
+function showCommittedMutation(event: Extract<RunEvent, { type: "mutation.committed" }>): boolean {
+  if (event.action === undefined || event.action === "edit") return true;
+  return event.path === event.rootPath || event.path === event.destinationPath;
+}
+
 export interface RenderOptions {
   /** Columns available. Used only for rules, never for wrapping content. */
   readonly width?: number;
@@ -125,7 +130,9 @@ export function renderInteractive(event: RunEvent, options: RenderOptions = {}):
     case "action.finished":
       return event.ok ? null : `    ✗ ${firstLine(event.output)}`;
     case "mutation.committed":
-      return `    ✓ ${event.path}  +${event.added} -${event.removed}`;
+      return showCommittedMutation(event)
+        ? `    ✓ ${event.path}  +${event.added} -${event.removed}`
+        : null;
     case "approval.resolved":
       return event.decision === "deny" ? "    ✗ skipped" : null;
     case "run.finished":
@@ -169,7 +176,9 @@ export function renderHeadless(event: RunEvent): string | null {
     case "action.finished":
       return `${event.ok ? "ok" : "failed"} ${event.id}${event.ok ? "" : `: ${firstLine(event.output)}`}`;
     case "mutation.committed":
-      return `committed ${event.path} +${event.added} -${event.removed}`;
+      return showCommittedMutation(event)
+        ? `committed ${event.path} +${event.added} -${event.removed}`
+        : null;
     case "run.finished":
       return `finished ${event.ok ? "ok" : "failed"}: ${event.summary}`;
     case "verification.started":

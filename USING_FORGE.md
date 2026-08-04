@@ -85,10 +85,10 @@ missed), `/verify` (the verification command it detected), `/replay`,
 `/approvals`.
 
 At an approval prompt: enter or `a` applies, `always` approves that kind for the
-session, anything else skips. Edits, file deletions, and commands are separate
-approval classes. `plan` and `read-only` are capability restrictions inside the
-Run actor: `--yes`, native tool calls, and malformed model output cannot bypass
-them.
+session, anything else skips. Text edits, each filesystem verb, and commands are
+separate approval classes. `plan` and `read-only` are capability restrictions
+inside the Run actor: `--yes`, native tool calls, and malformed model output
+cannot bypass them.
 
 For automation, `--json` writes one final document. `--stream-json` writes one
 JSON object per durable Run event and ends with a `{"type":"result",...}` record.
@@ -141,10 +141,14 @@ deciding *what* to build. Do not assume it transfers.
 2. **Set `verify` in `forge.json`.** A run with no verification command reports
    that it could not verify rather than pretending — but you get far more from
    a real command.
-3. **Review deletion previews carefully.** `DELETE <path>` removes one regular
-   file after showing the full removal diff and revalidating its revision. Forge
-   never recursively deletes directories or final-component symlinks. Deleted
-   content is retained for guarded `forge undo`.
+3. **Review filesystem previews carefully.** Forge supports `DELETE`, `MKDIR`,
+   `MOVE`, `COPY`, and `RENAME` for files, directories, binary data, and symlinks.
+   Recursive operations revalidate the complete bounded tree before commit and
+   retain binary-safe undo data first. Destinations must be absent, and the
+   repository root plus `.git`, `.forge`, and `.codex-bridge` are protected.
+   First-class tree operations stop above 10,000 entries or 128 MiB; larger or
+   specialized work requires an explicitly approved command without structured
+   per-entry undo.
 4. **Do not enable unfamiliar hooks.** Forge never auto-runs configured hooks;
    `--hooks` is your explicit consent to execute those repository commands.
 5. **Read the diff.** Its self-report is not evidence. The one measured failure

@@ -14,13 +14,16 @@
 
 import {
   appendFileSync,
+  chmodSync,
   existsSync,
   lstatSync,
   mkdirSync,
   readdirSync,
   readFileSync,
+  readlinkSync,
+  rmdirSync,
   rmSync,
-  statSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import path from "node:path";
@@ -57,7 +60,12 @@ import {
   transferIsolatedArtifacts,
 } from "./isolation.js";
 import { streamNative } from "./native.js";
-import { load as loadObject, store as storeObject } from "./objects.js";
+import {
+  load as loadObject,
+  loadBytes as loadObjectBytes,
+  store as storeObject,
+  storeBytes as storeObjectBytes,
+} from "./objects.js";
 import { runPolyglot } from "./polyglot.js";
 import {
   initializeProject,
@@ -106,7 +114,13 @@ import { newSessionId, SessionStore } from "./session.js";
 import { summarize, TurnMeter, type TurnUsage } from "./usage.js";
 import { detectCommands, formatForModel, verify } from "./verify.js";
 import { FORGE_VERSION } from "./version.js";
-import { resolveInside, revisionOf, Workspace } from "./workspace.js";
+import {
+  type EntryType,
+  resolveInside,
+  revisionOf,
+  revisionOfBytes,
+  Workspace,
+} from "./workspace.js";
 
 export interface IO {
   readonly out: (text: string) => void;
@@ -268,7 +282,8 @@ function listing(root: string, limit = 200): string {
       if (skip.has(name) || name.startsWith(".")) continue;
       const full = path.join(dir, name);
       try {
-        if (statSync(full).isDirectory()) walk(full, depth + 1);
+        const stat = lstatSync(full);
+        if (stat.isDirectory() && !stat.isSymbolicLink()) walk(full, depth + 1);
         else if (found.length < limit) found.push(path.relative(root, full));
       } catch {
         // Unreadable entries are simply not listed.
@@ -368,6 +383,35 @@ function entryExists(target: string): boolean {
   try {
     lstatSync(target);
     return true;
+  } catch {
+    return false;
+  }
+}
+
+function currentEntryMatches(
+  target: string,
+  entryType: EntryType,
+  expectedRevision: string | null,
+  expectedMode: number | null | undefined,
+): boolean {
+  try {
+    const stat = lstatSync(target);
+    const currentRevision =
+      entryType === "directory"
+        ? stat.isDirectory() && !stat.isSymbolicLink()
+          ? null
+          : "mismatch"
+        : entryType === "symlink"
+          ? stat.isSymbolicLink()
+            ? revisionOfBytes(Buffer.from(readlinkSync(target), "utf8"))
+            : "mismatch"
+          : stat.isFile() && !stat.isSymbolicLink()
+            ? revisionOf(target)
+            : "mismatch";
+    return (
+      currentRevision === expectedRevision &&
+      (expectedMode === null || expectedMode === undefined || (stat.mode & 0o7777) === expectedMode)
+    );
   } catch {
     return false;
   }
@@ -551,7 +595,10 @@ function makeTools(workspace: Workspace, signal?: AbortSignal) {
     // Keeps the bytes every edit replaced, so `forge undo` has something to
     // restore from. Content-addressed, so an unchanged file body costs nothing
     // however many times it is edited around.
-    retain: (content: string) => storeObject(workspace.root, content),
+    retain: (content: string | Buffer) =>
+      typeof content === "string"
+        ? storeObject(workspace.root, content)
+        : storeObjectBytes(workspace.root, content),
     runTool: async (proposal: {
       kind: string;
       tool?: string;
@@ -759,8 +806,8 @@ async function oneTurn(
   const bounded = boundTurnIntent(
     turn,
     batchActions
-      ? { proposals: 12, runs: 3, mutations: 2, deletes: 8 }
-      : { proposals: 8, runs: 2, mutations: 1, deletes: 4 },
+      ? { proposals: 12, runs: 3, mutations: 2, filesystem: 8 }
+      : { proposals: 8, runs: 2, mutations: 1, filesystem: 4 },
   );
   turn = bounded.turn;
 
@@ -795,7 +842,10 @@ async function oneTurn(
     guardNotice: bounded.notice,
     committedMutation: outcome.results.some(
       (result) =>
-        result.ok && (result.output.startsWith("applied ") || result.output.startsWith("deleted ")),
+        result.ok &&
+        ["applied ", "deleted ", "created directory ", "moved ", "copied "].some((prefix) =>
+          result.output.startsWith(prefix),
+        ),
     ),
     ranCommand: turn.proposals.some(
       (proposal) => proposal.kind === "call" && proposal.tool === "run",
@@ -1143,7 +1193,7 @@ export async function main(argv: readonly string[], io: IO = consoleIO): Promise
     const state = replay(journal);
     io.out("");
     io.out(
-      `${state.committed.length} file(s) changed · ${state.turn} turns · ${state.done ? (state.ok ? "ok" : "failed") : "unfinished"}`,
+      `${state.committed.length} path(s) changed · ${state.turn} turns · ${state.done ? (state.ok ? "ok" : "failed") : "unfinished"}`,
     );
     return state.ok ? 0 : 1;
   }
@@ -1322,9 +1372,9 @@ export async function main(argv: readonly string[], io: IO = consoleIO): Promise
     const workspace = new Workspace(root);
     let restored = 0;
     let skipped = 0;
-    // Reverse order, because two edits to one file must be unwound newest
-    // first: replaying them oldest-first would leave the file at its
-    // intermediate state rather than at its original one.
+    // Reverse order. Rich filesystem events are deliberately journalled in an
+    // order whose reverse removes created leaves before directories, then
+    // recreates deleted directories before their leaves.
     for (const event of [...mutations].reverse()) {
       if (event.type !== "mutation.committed") continue;
       const target = resolveInside(workspace.root, event.path);
@@ -1338,39 +1388,141 @@ export async function main(argv: readonly string[], io: IO = consoleIO): Promise
         skipped += 1;
         continue;
       }
-      if (
-        event.afterRevision === null
-          ? entryExists(target)
-          : revisionOf(target) !== event.afterRevision
-      ) {
-        io.err(`  ✗ ${event.path} changed since this session; left untouched`);
+
+      // Journals written before first-class filesystem operations had no entry
+      // type or operation. Preserve their exact revision-guarded semantics.
+      if (event.operation === undefined) {
+        if (
+          event.afterRevision === null
+            ? entryExists(target)
+            : revisionOf(target) !== event.afterRevision
+        ) {
+          io.err(`  ✗ ${event.path} changed since this session; left untouched`);
+          skipped += 1;
+          continue;
+        }
+        if (event.beforeRevision === null) {
+          try {
+            rmSync(target);
+            io.out(`  ✓ removed ${event.path}`);
+            restored += 1;
+          } catch {
+            io.err(`  ✗ ${event.path} could not be removed`);
+            skipped += 1;
+          }
+          continue;
+        }
+        const content = loadObject(workspace.root, event.beforeRevision);
+        if (content === null) {
+          io.err(`  ✗ ${event.path} — the replaced content was not recorded`);
+          skipped += 1;
+          continue;
+        }
+        mkdirSync(path.dirname(target), { recursive: true });
+        writeFileSync(target, content, "utf8");
+        io.out(`  ✓ restored ${event.path}`);
+        restored += 1;
+        continue;
+      }
+
+      if (event.entryType === undefined) {
+        io.err(`  ✗ ${event.path} — session has incomplete filesystem undo metadata`);
         skipped += 1;
         continue;
       }
-      if (event.beforeRevision === null) {
-        // A creation. Undoing it means removing the file -- but only if it is
-        // still the file that was created. Anything else and the user has
-        // worked on it since, and deleting their work is not an undo.
+
+      if (event.operation === "create") {
+        const unchanged =
+          entryExists(target) &&
+          currentEntryMatches(target, event.entryType, event.afterRevision, event.afterMode);
+        if (!unchanged) {
+          io.err(`  ✗ ${event.path} changed since this session; left untouched`);
+          skipped += 1;
+          continue;
+        }
         try {
-          rmSync(target);
+          // Non-recursive by design. A directory that gained user files after
+          // the session is not empty, so this fails rather than deleting them.
+          if (event.entryType === "directory") rmdirSync(target);
+          else rmSync(target);
           io.out(`  ✓ removed ${event.path}`);
           restored += 1;
         } catch {
-          io.err(`  ✗ ${event.path} could not be removed`);
+          io.err(`  ✗ ${event.path} is no longer empty or could not be removed`);
           skipped += 1;
         }
         continue;
       }
-      const content = loadObject(workspace.root, event.beforeRevision);
+
+      if (event.operation === "delete") {
+        if (entryExists(target)) {
+          io.err(`  ✗ ${event.path} changed since this session; left untouched`);
+          skipped += 1;
+          continue;
+        }
+        try {
+          if (event.entryType === "directory") {
+            mkdirSync(target, { mode: event.beforeMode ?? 0o755 });
+            if (event.beforeMode !== null && event.beforeMode !== undefined) {
+              chmodSync(target, event.beforeMode);
+            }
+          } else {
+            const content =
+              event.beforeRevision === null
+                ? null
+                : loadObjectBytes(workspace.root, event.beforeRevision);
+            if (content === null) {
+              io.err(`  ✗ ${event.path} — the deleted content was not recorded`);
+              skipped += 1;
+              continue;
+            }
+            mkdirSync(path.dirname(target), { recursive: true });
+            if (event.entryType === "symlink") {
+              symlinkSync(content.toString("utf8"), target);
+            } else {
+              writeFileSync(target, content);
+              if (event.beforeMode !== null && event.beforeMode !== undefined) {
+                chmodSync(target, event.beforeMode);
+              }
+            }
+          }
+          io.out(`  ✓ restored ${event.path}`);
+          restored += 1;
+        } catch {
+          io.err(`  ✗ ${event.path} could not be restored`);
+          skipped += 1;
+        }
+        continue;
+      }
+
+      // A write restores the exact prior file bytes only if the current entry
+      // still matches what the session committed.
+      const unchanged =
+        entryExists(target) &&
+        currentEntryMatches(target, event.entryType, event.afterRevision, event.afterMode);
+      if (!unchanged || event.beforeRevision === null) {
+        io.err(`  ✗ ${event.path} changed since this session; left untouched`);
+        skipped += 1;
+        continue;
+      }
+      const content = loadObjectBytes(workspace.root, event.beforeRevision);
       if (content === null) {
         io.err(`  ✗ ${event.path} — the replaced content was not recorded`);
         skipped += 1;
         continue;
       }
-      mkdirSync(path.dirname(target), { recursive: true });
-      writeFileSync(target, content, "utf8");
-      io.out(`  ✓ restored ${event.path}`);
-      restored += 1;
+      try {
+        mkdirSync(path.dirname(target), { recursive: true });
+        writeFileSync(target, content);
+        if (event.beforeMode !== null && event.beforeMode !== undefined) {
+          chmodSync(target, event.beforeMode);
+        }
+        io.out(`  ✓ restored ${event.path}`);
+        restored += 1;
+      } catch {
+        io.err(`  ✗ ${event.path} could not be restored`);
+        skipped += 1;
+      }
     }
     io.out(`${restored} restored, ${skipped} skipped — session ${id}`);
     return skipped === 0 ? 0 : 1;
@@ -2204,7 +2356,18 @@ async function reviewChanges(
   native: boolean,
 ): Promise<string | null> {
   void native;
-  const changed = [...new Set(run.snapshot().committed.map((entry) => entry.path))];
+  const mutationEvents = run.journal.all().filter((event) => event.type === "mutation.committed");
+  const changed = [
+    ...new Set(
+      mutationEvents.flatMap((event) =>
+        event.type === "mutation.committed"
+          ? [event.rootPath, event.destinationPath, event.path].filter(
+              (candidate): candidate is string => candidate !== undefined,
+            )
+          : [],
+      ),
+    ),
+  ];
   if (changed.length === 0) {
     // A completion claim having changed NOTHING. The first version returned
     // early here, reasoning that a "done" with no edits is either a question
@@ -2220,31 +2383,44 @@ async function reviewChanges(
       config,
       signal,
       [
-        "The request below was reported as complete, but NO files were changed.",
+        "The request below was reported as complete, but NO repository paths were changed.",
         "",
         "Reply DONE <one line> only if the request genuinely required no change",
-        "to any file — a question, or something already true of the code.",
+        "to any repository path — a question, or something already true of the code.",
         "Reply PROBLEM <what is missing> if it asked for work that was not done.",
       ].join("\n"),
       `The request was:\n${task}`,
     );
   }
-  const shown = changed
-    .map((file) => {
+  const reviewLimit = 200;
+  const shown = [
+    ...changed.slice(0, reviewLimit).map((file) => {
       const target = resolveInside(workspace.root, file);
       if (target === null) {
-        return `${file} \u2014 the path can no longer be resolved safely; deletion is not confirmed`;
+        return `${file} \u2014 the path can no longer be resolved safely; the result is not confirmed`;
       }
       if (!entryExists(target)) {
-        return `${file} \u2014 deleted; the path no longer exists`;
+        return `${file} \u2014 deleted or moved away; the path no longer exists`;
       }
       try {
+        const stat = lstatSync(target);
+        if (stat.isSymbolicLink()) {
+          return `${file} \u2014 symbolic link exists and points to ${JSON.stringify(readlinkSync(target))}`;
+        }
+        if (stat.isDirectory()) {
+          return `${file} \u2014 directory exists`;
+        }
         return `${file} \u2014 as it now stands on disk:\n${workspace.read(file)}`;
       } catch {
-        return `${file} \u2014 exists but could not be read back`;
+        return `${file} \u2014 file exists but is binary or could not be read back as text`;
       }
-    })
-    .join("\n\n");
+    }),
+    ...(changed.length > reviewLimit
+      ? [
+          `${changed.length - reviewLimit} additional changed path(s) omitted from this bounded review.`,
+        ]
+      : []),
+  ].join("\n\n");
 
   const messages: Message[] = [
     {
@@ -2253,11 +2429,11 @@ async function reviewChanges(
         "You are checking work that has already been applied. Be strict.",
         "",
         "Reply with exactly one of:",
-        "  DONE <one line> if the files below fully satisfy the request and",
+        "  DONE <one line> if the paths below fully satisfy the request and",
         "  nothing that worked before is now broken.",
         "  PROBLEM <what is wrong> otherwise.",
         "",
-        "Do not propose edits. Do not restate the files. Judge only.",
+        "Do not propose edits. Do not restate the paths. Judge only.",
       ].join("\n"),
     },
     { role: "user", content: `The request was:\n${task}\n\n${shown}` },
