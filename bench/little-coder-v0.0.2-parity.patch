@@ -1,0 +1,93 @@
+diff --git a/benchmarks/aider_polyglot.py b/benchmarks/aider_polyglot.py
+index 3584d4a..83155b0 100644
+--- a/benchmarks/aider_polyglot.py
++++ b/benchmarks/aider_polyglot.py
+@@ -48,10 +48,19 @@ from context import build_system_prompt
+ from config import load_config
+ from workspace import detect_language as _detect_language_general
+ 
+-BENCHMARK_ROOT = Path.home() / "Documents" / "polyglot-benchmark"
++BENCHMARK_ROOT = Path(os.environ.get(
++    "POLYGLOT_BENCHMARK_ROOT",
++    Path.home() / "Documents" / "polyglot-benchmark",
++))
+ REPO_ROOT      = Path(__file__).parent.parent
+-RESULTS_FILE   = Path(__file__).parent / "results_full_polyglot.json"
+-LOG_ROOT       = Path(__file__).parent / "full_polyglot_logs"
++RESULTS_FILE   = Path(os.environ.get(
++    "LITTLE_CODER_RESULTS_FILE",
++    Path(__file__).parent / "results_full_polyglot.json",
++))
++LOG_ROOT       = Path(os.environ.get(
++    "LITTLE_CODER_LOG_ROOT",
++    Path(__file__).parent / "full_polyglot_logs",
++))
+ 
+ 
+ # ---------------------------------------------------------------------------
+@@ -706,6 +715,11 @@ def main():
+     parser.add_argument("--resume", action="store_true",
+                         help="Skip exercises already recorded in results file")
+     parser.add_argument("--verbose", action="store_true")
++    parser.add_argument("--case-file", type=Path,
++                        help="Run language/exercise pairs listed one per line")
++    parser.add_argument("--base-url", default="")
++    parser.add_argument("--max-tokens", type=int, default=0)
++    parser.add_argument("--temperature", type=float)
+     args = parser.parse_args()
+ 
+     if not BENCHMARK_ROOT.exists():
+@@ -732,6 +746,12 @@ def main():
+     cfg = load_config()
+     cfg["model"] = args.model
+     cfg["permission_mode"] = "accept-all"
++    if args.base_url:
++        cfg["custom_base_url"] = args.base_url
++    if args.max_tokens > 0:
++        cfg["max_tokens"] = args.max_tokens
++    if args.temperature is not None:
++        cfg["temperature"] = args.temperature
+     system = build_system_prompt(cfg)
+ 
+     from local.config import is_small_model, get_model_profile
+@@ -752,9 +772,24 @@ def main():
+     print(f"  Exercises to run: {total_exercises}  (Results: {RESULTS_FILE})")
+     print(f"{'='*72}\n")
+ 
++    selected_cases = None
++    if args.case_file:
++        selected_cases = []
++        for raw in args.case_file.read_text().splitlines():
++            case = raw.strip()
++            if not case or case.startswith("#"):
++                continue
++            parts = case.split("/", 1)
++            if len(parts) != 2 or parts[0] not in LANGUAGES:
++                parser.error(f"invalid case '{case}'; expected language/exercise")
++            selected_cases.append((parts[0], parts[1]))
++        langs_to_run = list(dict.fromkeys(lang for lang, _ in selected_cases))
++
+     for lang_name in langs_to_run:
+         exercises = sorted(p.name for p in LANGUAGES[lang_name]["practice_dir"].iterdir() if p.is_dir())
+-        if args.exercise:
++        if selected_cases is not None:
++            exercises = [exercise for lang, exercise in selected_cases if lang == lang_name]
++        elif args.exercise:
+             exercises = [e for e in exercises if e == args.exercise]
+             if not exercises:
+                 continue
+diff --git a/providers.py b/providers.py
+index 48f2e63..2542ddf 100644
+--- a/providers.py
++++ b/providers.py
+@@ -451,6 +451,10 @@ def stream_openai_compat(
+         "messages": oai_messages,
+         "stream":   True,
+     }
++    # The paired Forge benchmark pins sampling across both agents.  Upstream
++    # little-coder does not forward this setting on OpenAI-compatible routes.
++    if config.get("temperature") is not None:
++        kwargs["temperature"] = config["temperature"]
+ 
+     # Pass num_ctx for known Ollama/LM Studio ports only — avoids matching other local servers (e.g. vLLM on :8000)
+     _is_local_ollama = "11434" in base_url

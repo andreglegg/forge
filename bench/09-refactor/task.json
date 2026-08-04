@@ -1,0 +1,12 @@
+{
+  "prompt": "src/calc.js has duplicated validation in every function \u2014 extract it into a single helper and use it everywhere, keeping behaviour identical",
+  "verify": [["node", "check.js"]],
+  "timeoutSeconds": 900,
+  "guard": [
+    [
+      "node",
+      "-e",
+      "import('./src/calc.js').then(m=>{if(m.add(2,3)!==5||m.mul(2,3)!==6)process.exit(1)})"
+    ]
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "prompt": "add a `double(n)` export to src/numbers.js that returns n * 2",
+  "verify": [["node", "check.js"]],
+  "timeoutSeconds": 900,
+  "guard": [
+    [
+      "node",
+      "-e",
+      "import('./src/strings.js').then(m=>{if(m.id_strings('a')!=='a')process.exit(1)})"
+    ]
+  ]
+}

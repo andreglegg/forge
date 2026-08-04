@@ -1,0 +1,12 @@
+{
+  "prompt": "the tests fail \u2014 find and fix the bug",
+  "verify": [["node", "check.js"]],
+  "timeoutSeconds": 900,
+  "guard": [
+    [
+      "node",
+      "-e",
+      "import('./src/config.js').then(m=>{if(typeof m.RATE!=='number')process.exit(1)})"
+    ]
+  ]
+}

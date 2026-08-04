@@ -1,0 +1,12 @@
+{
+  "prompt": "in docs.md, change the word Draft to Final on the status line",
+  "verify": [["node", "check.js"]],
+  "timeoutSeconds": 900,
+  "guard": [
+    [
+      "node",
+      "-e",
+      "const t=require('node:fs').readFileSync('docs.md','utf8');if(!t.includes('Merge guide'))process.exit(1)"
+    ]
+  ]
+}

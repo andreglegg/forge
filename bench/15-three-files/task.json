@@ -1,0 +1,12 @@
+{
+  "prompt": "add a `role` field to the User type, thread it through createUser, and expose it from the index",
+  "verify": [["node", "check.js"]],
+  "timeoutSeconds": 900,
+  "guard": [
+    [
+      "node",
+      "-e",
+      "import('./src/types.js').then(m=>{if(typeof m.makeUser!=='function')process.exit(1)})"
+    ]
+  ]
+}

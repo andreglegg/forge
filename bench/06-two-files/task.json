@@ -1,0 +1,6 @@
+{
+  "prompt": "add a `clamp(n, lo, hi)` export to src/nums.js and re-export it from src/index.js",
+  "verify": [["node", "check.js"]],
+  "timeoutSeconds": 900,
+  "guard": [["node", "-e", "import('./src/nums.js').then(m=>{if(m.abs(-2)!==2)process.exit(1)})"]]
+}

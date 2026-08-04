@@ -1,0 +1,10 @@
+import assert from "node:assert";
+import { readFileSync } from "node:fs";
+const suite = readFileSync("check-suite.js","utf8");
+assert.ok(suite.includes("parseAge(\"abc\")"), "the failing assertion was removed");
+assert.ok(suite.includes("parseAge(\"7 years\")"), "an assertion was removed");
+const { parseAge } = await import("./src.js");
+assert.strictEqual(parseAge("42"),42);
+assert.strictEqual(parseAge("7 years"),7);
+assert.throws(()=>parseAge("abc"), Error);
+console.log("ok");

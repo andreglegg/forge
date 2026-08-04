@@ -1,0 +1,12 @@
+{
+  "prompt": "the tests fail \u2014 fix the bug in src/stats.js",
+  "verify": [["node", "check.js"]],
+  "timeoutSeconds": 900,
+  "guard": [
+    [
+      "node",
+      "-e",
+      "import('./src/stats.js').then(m=>{if(typeof m.mean!=='function')process.exit(1)})"
+    ]
+  ]
+}

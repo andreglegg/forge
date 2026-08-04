@@ -1,0 +1,12 @@
+{
+  "prompt": "make the failing test pass without changing any existing behaviour",
+  "verify": [["node", "check.js"]],
+  "timeoutSeconds": 900,
+  "guard": [
+    [
+      "node",
+      "-e",
+      "import('./src/slug.js').then(m=>{if(m.slugify('Hello World')!=='hello-world')process.exit(1)})"
+    ]
+  ]
+}

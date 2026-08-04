@@ -1,0 +1,5 @@
+{
+  "prompt": "roman.py has a to_roman function that is wrong for 4, 9, 40, 90, 400 and 900 \u2014 fix it",
+  "verify": [["python3", "check.py"]],
+  "timeoutSeconds": 900
+}

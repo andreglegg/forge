@@ -1,0 +1,10 @@
+import assert from "node:assert";
+import { add, sub, mul } from "./src/calc.js";
+assert.strictEqual(add(2,3),5);
+assert.strictEqual(sub(5,3),2);
+assert.strictEqual(mul(2,3),6);
+assert.throws(() => add("a",1), TypeError);
+assert.throws(() => mul(1,"b"), TypeError);
+const src = (await import("node:fs")).readFileSync("src/calc.js","utf8");
+assert.ok((src.match(/typeof a/g) || []).length === 1, "validation still duplicated");
+console.log("ok");

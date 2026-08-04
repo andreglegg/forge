@@ -1,0 +1,5 @@
+{
+  "prompt": "implement src/store.js exporting addTask(text), listTasks() and completeTask(id), persisting to tasks.json in the working directory. Every task needs a stable numeric id and a done flag. Write tests for it in test/ using the built-in node:test and node:assert modules. `npm test` must pass.",
+  "verify": [["node", "check.js"]],
+  "timeoutSeconds": 900
+}

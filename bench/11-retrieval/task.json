@@ -1,0 +1,8 @@
+{
+  "prompt": "add input validation to computeDiscount so it throws a TypeError on a non-number",
+  "verify": [["node", "check.js"]],
+  "timeoutSeconds": 900,
+  "guard": [
+    ["node", "-e", "import('./src/mod1.js').then(m=>{if(m.helper1(5)!==5)process.exit(1)})"]
+  ]
+}

@@ -1,0 +1,5 @@
+{
+  "prompt": "create src/strings.js exporting a function `reverse(s)` that returns the string reversed",
+  "verify": [["node", "check.js"]],
+  "timeoutSeconds": 900
+}

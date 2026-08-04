@@ -1,0 +1,17 @@
+{
+  // Build configuration: compiles src/ to dist/ with tsc and ships that.
+  // Deliberately does NOT rely on Node's --experimental-strip-types; a
+  // user-installed CLI runs plain compiled JavaScript.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "rootDir": "src",
+    "outDir": "dist",
+    // A harness that reports its own failures needs readable stack traces.
+    "sourceMap": true,
+    // Never ship a dist/ produced from source that did not typecheck.
+    "noEmitOnError": true
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["tests", "**/*.test.ts"]
+}

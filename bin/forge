@@ -1,0 +1,30 @@
+#!/usr/bin/env node
+// The only place process.exit appears.
+import { existsSync, readdirSync, statSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+function newestSource(directory, suffix) {
+  let newest = 0;
+  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    const target = path.join(directory, entry.name);
+    if (entry.isDirectory()) newest = Math.max(newest, newestSource(target, suffix));
+    else if (entry.name.endsWith(suffix)) newest = Math.max(newest, statSync(target).mtimeMs);
+  }
+  return newest;
+}
+
+const project = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const source = path.join(project, "src");
+const built = path.join(project, "dist");
+if (
+  existsSync(source) &&
+  existsSync(built) &&
+  newestSource(source, ".ts") > newestSource(built, ".js")
+) {
+  process.stderr.write("Forge build is stale. Run `npm run build` before using bin/forge.\n");
+  process.exit(2);
+}
+
+import { main } from "../dist/cli.js";
+process.exit(await main(process.argv.slice(2)));

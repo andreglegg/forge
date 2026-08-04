@@ -1,0 +1,45 @@
+{
+  // Typecheck configuration: covers src, tests and this project's own config
+  // files, and emits nothing. `npm run build` uses tsconfig.build.json.
+  //
+  // The strictness flags below are load-bearing for this port. Read the
+  // "Compiler strictness" section of README.md before relaxing any of them.
+  "compilerOptions": {
+    // --- Runtime target: Node 22 LTS, native ESM ---
+    "target": "ES2023",
+    "lib": ["ES2023"],
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "moduleDetection": "force",
+    "resolveJsonModule": true,
+    "types": ["node"],
+
+    // --- Strictness ---
+    "strict": true,
+    // Index access yields `T | undefined`. Required: the tuple-key Maps that
+    // back the repeat/loop detectors and RoleProvidersConfig.for_role both
+    // read by dynamic key, where Python raises and TS would silently hand
+    // back undefined.
+    "noUncheckedIndexedAccess": true,
+    // Distinguishes "key absent" from "key present, value undefined". Required:
+    // pydantic's set/unset distinction drives model_dump output, and the
+    // `{...obj, ...update}` port of model_copy(update=...) must not smuggle
+    // explicit undefined into persisted reports.
+    "exactOptionalPropertyTypes": true,
+    "noImplicitOverride": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "noPropertyAccessFromIndexSignature": true,
+    "forceConsistentCasingInFileNames": true,
+
+    // --- Emit/transform discipline ---
+    // vitest transforms each file independently with esbuild; isolatedModules
+    // makes tsc reject anything esbuild cannot transform file-at-a-time, so
+    // the typechecker and the test runner cannot disagree.
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+    "skipLibCheck": true,
+    "noEmit": true
+  },
+  "include": ["src/**/*.ts", "tests/**/*.ts", "vitest.config.ts"]
+}
