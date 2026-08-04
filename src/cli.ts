@@ -33,6 +33,7 @@ import {
   runTrials,
 } from "./bench.js";
 import { NativeCodec, TextCodec } from "./codecs.js";
+import { compactTranscript } from "./compaction.js";
 import {
   comparePolyglotReports,
   comparePolyglotWithLittleCoder,
@@ -205,25 +206,9 @@ export function transcriptBudgetChars(
   return Math.max(32_000, Math.floor(Math.max(8_000, window - replyReserve) * 2.5));
 }
 
-/** Keep stable setup plus the newest turns under a conservative token estimate. */
+/** Keep setup, newest turns, and high-value omitted evidence under budget. */
 export function boundTranscript(messages: readonly Message[], budgetChars: number): Message[] {
-  const total = messages.reduce((sum, message) => sum + message.content.length, 0);
-  if (total <= budgetChars) return [...messages];
-
-  const fixed = messages.slice(0, Math.min(2, messages.length));
-  const fixedCost = fixed.reduce((sum, message) => sum + message.content.length, 0);
-  const notice =
-    "Earlier turns were omitted by the context guard. Trust the current files and recent tool results.";
-  let remaining = Math.max(0, budgetChars - fixedCost - notice.length);
-  const recent: Message[] = [];
-  for (let index = messages.length - 1; index >= fixed.length; index -= 1) {
-    const message = messages[index];
-    if (message === undefined) continue;
-    if (message.content.length > remaining) break;
-    recent.unshift(message);
-    remaining -= message.content.length;
-  }
-  return [...fixed, { role: "user", content: notice }, ...recent];
+  return compactTranscript(messages, budgetChars);
 }
 
 function parseArgs(argv: readonly string[]): {

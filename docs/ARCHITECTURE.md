@@ -40,7 +40,7 @@ Approval therefore applies to a specific file revision and diff, not merely to a
 
 `src/context.ts` compiles a bounded task-specific prompt and emits a receipt describing what was included or dropped. The current strategy combines lexical file scoring, small-file inlining, one-hop local-import following, repository instructions, and an optional exercise task packet.
 
-Long transcripts are bounded by retaining stable setup messages and the newest evidence. This is a context guard, not a semantic summarizer.
+`src/compaction.ts` bounds long transcripts deterministically. It retains stable setup, a recent contiguous tail, and selected omitted evidence such as verification failures, source locations, executed actions, and explicit user constraints. It deliberately labels compacted evidence as historical and never claims old file contents are current. No second model is used for summarization.
 
 ## Verification
 

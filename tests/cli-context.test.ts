@@ -96,6 +96,52 @@ describe("bounded run options", () => {
     expect(transcriptBudgetChars({ contextWindow: 0, maxTokens: 0 })).toBeGreaterThan(100_000);
   });
 
+  test("retains omitted failures, paths, and user constraints as compact evidence", () => {
+    const messages = [
+      { role: "system" as const, content: "system" },
+      { role: "user" as const, content: "initial task" },
+      {
+        role: "assistant" as const,
+        content: `${"noise ".repeat(80)}\nverification failed: TypeError in src/api/client.ts:42 expected status 200`,
+      },
+      {
+        role: "user" as const,
+        content: `Do not add dependencies. Preserve the public API. ${"more noise ".repeat(40)}`,
+      },
+      { role: "assistant" as const, content: "latest action" },
+      { role: "user" as const, content: "recent result" },
+    ];
+
+    const bounded = boundTranscript(messages, 430);
+    const compacted = bounded.map((message) => message.content).join("\n");
+
+    expect(bounded.reduce((sum, message) => sum + message.content.length, 0)).toBeLessThanOrEqual(
+      430,
+    );
+    expect(compacted).toContain("initial task");
+    expect(compacted).toContain("verification failed");
+    expect(compacted).toContain("src/api/client.ts:42");
+    expect(compacted).toContain("Do not add dependencies");
+    expect(compacted).toContain("recent result");
+    expect(compacted).not.toContain("noise noise noise noise noise noise noise noise");
+  });
+
+  test("clips oversized setup while remaining within an extreme budget", () => {
+    const bounded = boundTranscript(
+      [
+        { role: "system", content: "s".repeat(500) },
+        { role: "user", content: "task ".repeat(100) },
+        { role: "assistant", content: "latest" },
+      ],
+      180,
+    );
+
+    expect(bounded.reduce((sum, message) => sum + message.content.length, 0)).toBeLessThanOrEqual(
+      180,
+    );
+    expect(bounded.some((message) => message.content.includes("context guard"))).toBe(true);
+  });
+
   test("deduplicates and clips tool observations", () => {
     const output = "x".repeat(5_000);
     const text = observationsFrom(

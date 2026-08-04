@@ -14,6 +14,7 @@ This table describes the executable TypeScript product in `src/`.
 | Verification gate | Shipped | Detected/configured commands and confirmation of a passing suite. |
 | Sessions/show/undo | Shipped | Crash-tolerant repository-local journals and revision-guarded undo. |
 | Interactive session resume | Shipped | `/resume [id]`, `forge continue [id]`, and `forge resume [id]` restore observable trace and tool evidence. |
+| Evidence-preserving compaction | Shipped | Long transcripts retain stable setup, newest turns, prior failures, source locations, and explicit user constraints under a deterministic character budget. |
 | Decoder replay | Shipped | Offline conversion/repair measurement from retained traces. |
 | Benchmark and Polyglot adapters | Shipped | Reproducible identities, resume, comparisons, infrastructure classification. |
 | npm package | Alpha | Package metadata and cross-platform release CI exist; publication is still manual. |

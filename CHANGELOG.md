@@ -13,6 +13,7 @@ All notable product changes are recorded here. Forge follows semantic versioning
 - Current TypeScript architecture, security, and feature-status documentation.
 - `forge doctor`, `forge init`, `forge config`, and `forge profiles` product commands.
 - Strict named model profiles for endpoint, model, context/output budgets, temperature, protocol, and turn budget.
+- Deterministic evidence-preserving transcript compaction for failures, source locations, constraints, and recent turns.
 - Provider/model completion preflight before coding sessions.
 - Capability-enforced `workspace`, `read-only`, and `plan` modes.
 - `forge continue` / `forge resume` top-level session continuation.
