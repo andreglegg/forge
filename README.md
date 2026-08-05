@@ -320,7 +320,7 @@ READ packages/api/src/server.ts:120-220
 complete bounded index, including paths deeper than three levels and beyond 200
 files. `RELATED` reports the nearest package root, direct relative module
 dependencies, inbound dependents, and related tests for TypeScript/JavaScript
-files. `SYMBOL` reports exact declarations, `REFERENCES` reports syntax occurrences, and `CALLERS` uses the TypeScript checker to resolve direct calls and constructor calls across relative-import aliases and lexical scopes. Every result carries an exact range and source revision. `READ path:start-end` gives an exact line range, while an unrestricted
+files. Tasks that explicitly name code-shaped symbols automatically rank and inline matching declaration, caller, reference, and one-hop dependency files, even when filenames do not share the task wording. This automatic pre-turn analysis is capped at 200 supported source files; larger repositories keep the lightweight lexical path and can use the explicit semantic tools. `SYMBOL` reports exact declarations, `REFERENCES` reports syntax occurrences, and `CALLERS` uses the TypeScript checker to resolve direct calls and constructor calls across relative-import aliases and lexical scopes. Every result carries an exact range and source revision. `READ path:start-end` gives an exact line range, while an unrestricted
 large read is clipped with a continuation instruction. Search skips binary files
 and files above 2 MiB; reads are bounded to 16,000 characters per action. A
 ranged, clipped, or failed read never authorizes a wholesale replacement of an

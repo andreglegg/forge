@@ -15,6 +15,51 @@ import {
 import { Workspace } from "../src/workspace.js";
 
 describe("task context import following", () => {
+  test("uses an explicitly named symbol to inline declarations and callers with unrelated filenames", async () => {
+    const dir = realpathSync(await mkdtemp(path.join(tmpdir(), "context-semantic-")));
+    try {
+      mkdirSync(path.join(dir, "src"), { recursive: true });
+      writeFileSync(
+        path.join(dir, "src", "engine.ts"),
+        "export class InvoiceService { calculateTotal() { return 10; } }\n",
+      );
+      writeFileSync(
+        path.join(dir, "src", "checkout.ts"),
+        'import { InvoiceService as BillingEngine } from "./engine";\nexport function submit() { return new BillingEngine().calculateTotal(); }\n',
+      );
+      writeFileSync(path.join(dir, "src", "unrelated.ts"), "export const untouched = true;\n");
+
+      const result = await taskContext(
+        new Workspace(dir),
+        "Fix InvoiceService without changing its public API",
+        24_000,
+      );
+      const declaration = result.receipt.items.find((item) => item.path === "src/engine.ts");
+      const caller = result.receipt.items.find((item) => item.path === "src/checkout.ts");
+
+      expect(declaration?.included).toBe(true);
+      expect(declaration?.reason).toContain("declares task symbol InvoiceService");
+      expect(caller?.included).toBe(true);
+      expect(caller?.reason).toContain("calls task symbol InvoiceService from submit");
+      expect(result.text).toContain("export class InvoiceService");
+      expect(result.text).toContain("new BillingEngine().calculateTotal()");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("does not add semantic evidence for ordinary prose", async () => {
+    const dir = realpathSync(await mkdtemp(path.join(tmpdir(), "context-natural-language-")));
+    try {
+      writeFileSync(path.join(dir, "service.ts"), "export class Service { run() {} }\n");
+      const result = await taskContext(new Workspace(dir), "fix the service", 24_000);
+
+      expect(result.receipt.items.every((item) => !item.reason.includes("task symbol"))).toBe(true);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("an inlined file pulls in one local dependency", async () => {
     const dir = realpathSync(await mkdtemp(path.join(tmpdir(), "context-import-")));
     try {
@@ -25,7 +70,7 @@ describe("task context import following", () => {
       );
       writeFileSync(path.join(dir, "src", "config.js"), "export const RATE = 1.2;\n");
 
-      const result = taskContext(new Workspace(dir), "fix the price calculation", 24_000);
+      const result = await taskContext(new Workspace(dir), "fix the price calculation", 24_000);
       const dependency = result.receipt.items.find((item) => item.path === "src/config.js");
 
       expect(dependency?.included).toBe(true);
@@ -56,7 +101,7 @@ describe("task context import following", () => {
       writeFileSync(path.join(dir, "src", "legacy.js"), "module.exports = 2;\n");
       writeFileSync(path.join(dir, "src", "lazy.ts"), "export default 3;\n");
 
-      const result = taskContext(new Workspace(dir), "fix the service", 24_000);
+      const result = await taskContext(new Workspace(dir), "fix the service", 24_000);
       const followed = result.receipt.items
         .filter((item) => item.reason === "imported by src/service.ts")
         .map((item) => item.path)
@@ -91,7 +136,7 @@ describe("task context import following", () => {
       mkdirSync(path.dirname(target), { recursive: true });
       writeFileSync(target, "export const BILLING_SENTINEL = true;\n");
 
-      const result = taskContext(new Workspace(dir), "fix the invoice service", 24_000);
+      const result = await taskContext(new Workspace(dir), "fix the invoice service", 24_000);
       const selected = result.receipt.items.find((item) => item.path === relative);
 
       expect(result.text).toContain("Repository index:");
@@ -110,8 +155,8 @@ describe("task context import following", () => {
       writeFileSync(path.join(dir, "solution.ts"), "export function solve() {}\n");
       writeFileSync(path.join(dir, ".docs", "instructions.md"), "Handle empty inputs.\n");
 
-      const minimal = taskContext(new Workspace(dir), "implement the exercise", 24_000);
-      const packet = taskContext(new Workspace(dir), "implement the exercise", 24_000, true);
+      const minimal = await taskContext(new Workspace(dir), "implement the exercise", 24_000);
+      const packet = await taskContext(new Workspace(dir), "implement the exercise", 24_000, true);
 
       expect(minimal.text).not.toContain("Handle empty inputs.");
       expect(packet.text).toContain("Handle empty inputs.");

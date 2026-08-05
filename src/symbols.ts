@@ -17,6 +17,7 @@ const SUPPORTED_EXTENSIONS = new Set([
 const DEFAULT_MAX_FILES = 10_000;
 const DEFAULT_MAX_FILE_BYTES = 512 * 1024;
 const DEFAULT_MAX_RESULTS = 100;
+const AUTOMATIC_CONTEXT_MAX_FILES = 200;
 
 export type RepositorySymbolKind =
   | "function"
@@ -111,6 +112,29 @@ export interface RepositoryCallerResult {
   readonly matches: readonly RepositoryCaller[];
   readonly output: string;
   readonly truncated: boolean;
+}
+
+export interface SemanticContextPath {
+  readonly path: string;
+  readonly score: number;
+  readonly reason: string;
+}
+
+const TASK_SYMBOL_PATTERN = /\b[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)*\b/g;
+
+/** Extract identifiers that look deliberately code-shaped rather than ordinary prose. */
+export function taskSymbolQueries(task: string): readonly string[] {
+  const found = new Set<string>();
+  for (const candidate of task.match(TASK_SYMBOL_PATTERN) ?? []) {
+    const leaf = candidate.split(".").at(-1) ?? candidate;
+    const codeShaped =
+      candidate.includes(".") ||
+      /[a-z][A-Z]/.test(leaf) ||
+      /^[A-Z][A-Za-z0-9_$]*[a-z][A-Za-z0-9_$]*$/.test(leaf) ||
+      (/^[A-Z][A-Z0-9_$]+$/.test(leaf) && leaf.length >= 3);
+    if (codeShaped) found.add(candidate);
+  }
+  return [...found].slice(0, 4);
 }
 
 function normalizedScope(candidate: string): string | null {
@@ -658,6 +682,59 @@ export function findRepositoryCallers(
     ...(truncated ? ["[caller scan truncated at the configured safety limit]"] : []),
   ].join("\n");
   return { query, matches: shown, output, truncated };
+}
+
+export function semanticContextPaths(
+  root: string,
+  task: string,
+  index: RepositoryIndex = indexRepository(root),
+): readonly SemanticContextPath[] {
+  const queries = taskSymbolQueries(task);
+  if (queries.length === 0) return [];
+  const supportedFiles = index.entries.filter(
+    (entry) => entry.type === "file" && isSupportedSource(entry.path),
+  ).length;
+  // Automatic context runs before the first model turn, so it has a stricter
+  // latency budget than an explicitly requested SYMBOL/REFERENCES/CALLERS tool.
+  if (supportedFiles > AUTOMATIC_CONTEXT_MAX_FILES) return [];
+
+  const symbols = buildRepositorySymbols(root, index);
+  const evidence = new Map<string, SemanticContextPath>();
+  const add = (candidatePath: string, score: number, reason: string): void => {
+    const current = evidence.get(candidatePath);
+    if (current === undefined) {
+      evidence.set(candidatePath, { path: candidatePath, score, reason });
+      return;
+    }
+    evidence.set(candidatePath, {
+      path: candidatePath,
+      score: Math.max(current.score, score),
+      reason: current.reason.includes(reason) ? current.reason : `${current.reason}; ${reason}`,
+    });
+  };
+
+  for (const query of queries) {
+    const declarations = findRepositorySymbols(root, query, {
+      index,
+      symbols,
+      maxResults: 20,
+    }).matches;
+    for (const declaration of declarations) {
+      add(declaration.path, 40, `declares task symbol ${query}`);
+    }
+    if (declarations.length === 0) continue;
+    for (const caller of findRepositoryCallers(root, query, { index, maxResults: 30 }).matches) {
+      add(caller.path, 30, `calls task symbol ${query} from ${caller.caller}`);
+    }
+    for (const reference of findRepositoryReferences(root, query, { index, maxResults: 30 })
+      .matches) {
+      add(reference.path, 20, `references task symbol ${query}`);
+    }
+  }
+
+  return [...evidence.values()].sort(
+    (left, right) => right.score - left.score || left.path.localeCompare(right.path),
+  );
 }
 
 export function findRepositorySymbols(

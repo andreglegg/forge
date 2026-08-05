@@ -386,15 +386,41 @@ const VERIFY_CONFIRMATIONS = 2;
  * missed the cut. A retrieval change nobody can inspect is a retrieval change
  * nobody can defend.
  */
-export function taskContext(
+export async function taskContext(
   workspace: Workspace,
   task: string,
   budgetChars: number,
   taskPacket = false,
-): { text: string; receipt: ContextReceipt } {
+): Promise<{ text: string; receipt: ContextReceipt }> {
   const index = indexRepository(workspace.root);
   const paths = repositoryFiles(index);
   const ranked = scoreFiles(paths, task);
+  const hasCodeShapedIdentifier =
+    /\b(?:[A-Za-z_$][A-Za-z0-9_$]*\.[A-Za-z_$][A-Za-z0-9_$]*|[A-Za-z_$]*[a-z][A-Z][A-Za-z0-9_$]*|[A-Z][A-Z0-9_$]{2,})\b/.test(
+      task,
+    );
+  const supportedSourceFiles = paths.filter((candidate) =>
+    /\.(?:[cm]?[jt]sx?)$/i.test(candidate),
+  ).length;
+  const semantic =
+    hasCodeShapedIdentifier && supportedSourceFiles <= 200
+      ? (await import("./symbols.js")).semanticContextPaths(workspace.root, task, index)
+      : [];
+  const semanticByPath = new Map(semantic.map((item) => [item.path, item]));
+  const enriched = ranked
+    .map((item) => {
+      const evidence = semanticByPath.get(item.path ?? item.id);
+      if (evidence === undefined) return item;
+      return {
+        ...item,
+        score: item.score + evidence.score,
+        reason:
+          item.reason === "no query token matched"
+            ? evidence.reason
+            : `${item.reason}; ${evidence.reason}`,
+      };
+    })
+    .sort((left, right) => right.score - left.score || left.id.localeCompare(right.id));
   const inlineBudget = Math.floor(budgetChars * 0.7);
   let inlined = 0;
   const inlinedPaths = new Set<string>();
@@ -408,10 +434,10 @@ export function taskContext(
   // rather than the score. On a repository too large for that the budget bites
   // immediately and this costs nothing; on a small one it hands over the whole
   // problem at once, which is the case where a small model does best.
-  const nothingMatched = ranked.every((item) => item.score <= 0);
+  const nothingMatched = enriched.every((item) => item.score <= 0);
   const smallRepositoryFallback = nothingMatched && paths.length <= 80;
 
-  const items = ranked.map((item) => {
+  const items = enriched.map((item) => {
     const relative = item.path ?? item.text;
     // Only files the query matched are worth their contents -- unless nothing
     // matched at all, in which case withholding them helps no one.
@@ -1804,7 +1830,7 @@ async function headless(
   })();
 
   run.start(task);
-  const context = taskContext(workspace, task, 24_000, options["task-packet"] === true);
+  const context = await taskContext(workspace, task, 24_000, options["task-packet"] === true);
   const messages: Message[] = [
     {
       role: "system",
@@ -2132,7 +2158,7 @@ async function interactive(
         continue;
       }
 
-      const context = taskContext(workspace, input, contextBudget, taskPacket);
+      const context = await taskContext(workspace, input, contextBudget, taskPacket);
       lastReceipt = context.receipt;
       transcript.push({ role: "user", content: `${context.text}\n\n${input}` });
       const run = new Run(makeRunEffects(workspace, controller.signal, mode), false, policy);

@@ -12,7 +12,7 @@ engineering state.
 | Local suite (15 tasks, 3 trials) | **14/15** every trial, 0 false successes | `bench/DECOMPOSE_INSTRUCTION.md` |
 | Greenfield build | works, then over-reports | same |
 | Model scaling | 7B 4.8% / 14B 11.9-14.3% / 30B-MoE 64-67% | `bench/MODEL_SCALING.md` |
-| Tests | **321 pass, 1 skip** | `npm run check` on 2026-08-05 |
+| Tests | **323 pass, 1 skip** | `npm run check` on 2026-08-05 |
 
 ## Measurement discipline (read before running an experiment)
 
@@ -56,22 +56,13 @@ Git-worktree isolation and verified promotion, named model profiles,
 evidence-preserving compaction, promotion risk scanning, and explicit bounded
 headless lifecycle hooks.
 
-The current working slice adds checker-resolved direct caller intelligence:
+The current working slice adds dependency- and caller-backed automatic context selection:
 
-- `CALLERS <name>` has text/native parity and uses the pinned TypeScript 5.9
-  checker to resolve direct calls and constructor calls.
-- Relative-import aliases resolve to their declarations, while same-named local
-  closures are excluded by lexical symbol identity.
-- Qualified member queries such as `InvoiceService.calculateTotal` resolve class
-  methods separately from top-level functions with the same short name.
-- Results include the enclosing caller, exact line/column range, and source
-  revision, bounded to 10,000 supported files, 512 KiB per file, and 100 results.
-- The parser/checker remains lazy-loaded only for `SYMBOL`, `REFERENCES`, or
-  `CALLERS`, so ordinary runs avoid its startup and memory cost.
-- Dynamic dispatch, reflection, package/path aliases, inferred runtime targets,
-  and untyped calls remain explicitly unsupported.
-- A scripted provider test proves `SYMBOL` followed by `CALLERS` end to end in a
-  222-file project.
+- Tasks that explicitly name up to four code-shaped TypeScript/JavaScript symbols now rank exact declaration, checker-resolved direct caller, syntax-reference, and one-hop module dependency files before the initial model turn.
+- Semantic evidence participates in the existing context score, character budget, repository visibility rules, and `/context` receipt instead of bypassing retrieval controls.
+- Ordinary prose remains on the lightweight lexical path. Automatic semantic context is capped at 200 supported source files to protect first-turn latency; larger repositories can still use explicit `SYMBOL`, `REFERENCES`, and `CALLERS` actions with their existing 10,000-file limits.
+- A regression test proves that `InvoiceService` surfaces both an unrelated declaration file and an aliased constructor caller whose filename shares no task vocabulary.
+- `npm run check` passes 323 tests with one intentional pty skip.
 
 ### Historical verification-gate context
 
@@ -83,22 +74,11 @@ failed 1 run in 6. Confirmation prevents that pass from laundering a bad change.
 
 ## Open, in product-plan order
 
-1. **Dependency-backed automatic context selection.** Use exact declarations,
-   checker-resolved callers, syntax references, and bounded module relationships
-   to select relevant files without relying only on task vocabulary.
-2. **Change-impact analysis and focused verification planning.** Map run-mutated
-   paths to packages, inbound dependency closure, and candidate tests while
-   preserving the authoritative full completion gate.
-3. **Failure-class-specific recovery.** Replace generic retry prompting with
-   bounded strategies for syntax, type, test, timeout, infrastructure, and
-   no-progress failures.
-4. **Execution-backend interface and optional Docker/Podman isolation.** Current
-   worktrees isolate repository mutations only; commands still run on the host.
-5. **Versioned server/event contract**, followed by IDE clients, MCP, and a small
-   permissioned extension API.
-6. **Benchmark follow-up.** The second full-225 replication and current Little
-   Coder comparison remain useful, but no new product slice should claim a score
-   gain without paired evidence.
+1. **Change-impact analysis and focused verification planning.** Map run-mutated paths to packages, inbound dependency closure, and candidate tests while preserving the authoritative full completion gate.
+2. **Failure-class-specific recovery.** Replace generic retry prompting with bounded strategies for syntax, type, test, timeout, infrastructure, and no-progress failures.
+3. **Execution-backend interface and optional Docker/Podman isolation.** Current worktrees isolate repository mutations only; commands still run on the host.
+4. **Versioned server/event contract**, followed by IDE clients, MCP, and a small permissioned extension API.
+5. **Benchmark follow-up.** The second full-225 replication and current Little Coder comparison remain useful, but no new product slice should claim a score gain without paired evidence.
 
 ## Constraints
 

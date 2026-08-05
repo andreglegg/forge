@@ -132,7 +132,7 @@ READ packages/api/src/server.ts:120-220
 
 `LIST` is one directory level. Glob and search operate over paths at any depth.
 `RELATED` reports a TypeScript/JavaScript file's nearest package root, direct
-relative dependencies, inbound dependents, and nearby tests. `SYMBOL` reports exact TypeScript/JavaScript declarations and named members with line/column ranges, export status, and a source revision. Ranged reads make
+relative dependencies, inbound dependents, and nearby tests. When a task explicitly names a code-shaped symbol, Forge automatically includes matching declaration, direct caller, syntax-reference, and one-hop dependency files under the normal context budget. Automatic pre-turn semantic analysis is capped at 200 supported source files; larger repositories retain the explicit tools. `SYMBOL` reports exact TypeScript/JavaScript declarations and named members with line/column ranges, export status, and a source revision. Ranged reads make
 large source files usable without flooding the model context. Ordinary context
 also follows one dependency hop through the same resolver. It excludes
 dependency/build/cache directories, common credential
