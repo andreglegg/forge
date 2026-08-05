@@ -12,7 +12,7 @@ engineering state.
 | Local suite (15 tasks, 3 trials) | **14/15** every trial, 0 false successes | `bench/DECOMPOSE_INSTRUCTION.md` |
 | Greenfield build | works, then over-reports | same |
 | Model scaling | 7B 4.8% / 14B 11.9-14.3% / 30B-MoE 64-67% | `bench/MODEL_SCALING.md` |
-| Tests | **326 pass, 1 skip** | `npm run check` on 2026-08-05 |
+| Tests | **330 pass, 1 skip** | `npm run check` on 2026-08-05 |
 
 ## Measurement discipline (read before running an experiment)
 
@@ -56,15 +56,15 @@ Git-worktree isolation and verified promotion, named model profiles,
 evidence-preserving compaction, promotion risk scanning, and explicit bounded
 headless lifecycle hooks.
 
-The current working slice adds change-impact planning from actual committed paths:
+The current working slice adds deterministic focused verification execution from actual committed paths:
 
 - `src/impact.ts` maps current indexed mutations through bounded inbound TypeScript/JavaScript dependency closure.
 - Plans report owning package roots and rank candidate tests: directly affected tests first, then same-stem tests, then tests inside affected packages.
-- The plan is appended to the next model observation after each successful mutation in both headless and interactive sessions.
-- Headless `--json` and `--stream-json` final results retain the same structured impact evidence.
+- `src/focused-verification.ts` narrows only configured `npm`/`pnpm`/`yarn`/`bun` test commands, and only to candidate tests owned by that command's package.
+- Focused checks run once after a successful mutation, feed their pass/failure output into the next model turn, and are retained in headless `--json`/`--stream-json` results with exact commands and rationale.
 - Deleted or moved-away paths are reported as unanalyzable rather than assigned invented dependencies or tests.
-- Impact evidence is advisory for iteration. It does not weaken, replace, or narrow the configured authoritative completion gate.
-- Focused impact/context tests pass 20/20; `npm run check` passes 326 tests with one intentional pty skip.
+- Unsupported `check`, lint, pre-specialized, or ambiguous commands produce no automatic run. The authoritative completion gate remains unchanged.
+- Focused planner/impact/verifier tests pass 28/28; `npm run check` passes 330 tests with one intentional pty skip.
 
 ### Historical verification-gate context
 
@@ -76,11 +76,10 @@ failed 1 run in 6. Confirmation prevents that pass from laundering a bad change.
 
 ## Open, in product-plan order
 
-1. **Automatic focused verification execution.** Synthesize safe package/test commands from the shipped impact evidence, run them during iteration, and persist exactly which commands ran and why. The authoritative full completion gate must remain unchanged.
-2. **Failure-class-specific recovery.** Replace generic retry prompting with bounded strategies for syntax, type, test, timeout, infrastructure, and no-progress failures.
-3. **Execution-backend interface and optional Docker/Podman isolation.** Current worktrees isolate repository mutations only; commands still run on the host.
-4. **Versioned server/event contract**, followed by IDE clients, MCP, and a small permissioned extension API.
-5. **Benchmark follow-up.** The second full-225 replication and current Little Coder comparison remain useful, but no new product slice should claim a score gain without paired evidence.
+1. **Failure-class-specific recovery.** Replace generic retry prompting with bounded strategies for syntax, type, test, timeout, infrastructure, and no-progress failures.
+2. **Execution-backend interface and optional Docker/Podman isolation.** Current worktrees isolate repository mutations only; commands still run on the host.
+3. **Versioned server/event contract**, followed by IDE clients, MCP, and a small permissioned extension API.
+4. **Benchmark follow-up.** The second full-225 replication and current Little Coder comparison remain useful, but no new product slice should claim a score gain without paired evidence.
 
 ## Constraints
 

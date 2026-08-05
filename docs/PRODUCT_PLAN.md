@@ -33,7 +33,7 @@ Goal: make every attempted change bounded, recoverable, independently checked, a
 
 1. Transactional files, commands, sessions, undo, verification, and isolated Git promotion. **Shipped.**
 2. Failure-class-specific retry policies for syntax, type, test, timeout, toolchain, and no-progress failures.
-3. Verification planning: focused checks during development, authoritative project gates before completion.
+3. Verification planning: focused checks during development, authoritative project gates before completion. **Shipped for deterministic Node test commands.**
 4. Execution-backend interface separating host, Git-worktree, and container execution.
 5. Optional Docker/Podman backend with network-off default, restricted user, read-only host mounts, and CPU/memory/process/disk limits.
 6. Stronger dependency-confusion, secret, workflow, and generated-file analysis before promotion.
@@ -85,10 +85,10 @@ Exit reached: when a task explicitly names a TypeScript/JavaScript symbol, Forge
 - Record files changed by the current run. **Shipped.**
 - Map changes to package roots, inbound dependency closure, and candidate tests. **Shipped.**
 - Feed the bounded impact plan into the next model turn and retain it in headless machine results. **Shipped.**
-- Run focused checks automatically while iterating, then the configured authoritative gate before accepting completion. **Next.**
-- Persist which focused commands ran and why. **Next.**
+- Run deterministically narrowed Node test commands automatically while iterating, then the configured authoritative gate before accepting completion. **Shipped.**
+- Persist which focused commands ran, why, and their complete verification reports. **Shipped.**
 
-Partial exit reached: Forge now identifies affected packages and candidate tests from actual committed paths while preserving the authoritative full completion gate. Full exit requires safe command synthesis and execution for focused checks.
+Exit reached for the supported boundary: Forge identifies affected packages/tests, narrows only recognized configured Node test commands, executes them once during iteration, persists the evidence, and still requires the authoritative completion gate. Broader language adapters remain future work.
 
 ### Milestone 4 — typed recovery
 
@@ -132,7 +132,7 @@ Each pass must inspect the latest repository state, preserve unrelated work, imp
 3. Syntax reference lookup. **Completed.**
 4. Semantic caller resolution. **Completed.**
 5. Dependency-backed automatic context selection. **Completed.**
-6. Change-impact model and focused verification planning. **Completed for impact evidence; automatic focused command execution remains.**
+6. Change-impact model and focused verification execution. **Completed for deterministic Node test commands.**
 7. Failure classification and one bounded retry strategy. **Next.**
 8. Execution-backend interface around existing host/worktree behavior.
 9. Versioned server/event contract foundation.

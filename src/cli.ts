@@ -119,7 +119,7 @@ import {
 } from "./runtime.js";
 import { newSessionId, SessionStore } from "./session.js";
 import { summarize, TurnMeter, type TurnUsage } from "./usage.js";
-import { detectCommands, formatForModel, verify } from "./verify.js";
+import { detectCommands, formatForModel, type VerificationReport, verify } from "./verify.js";
 import { FORGE_VERSION } from "./version.js";
 import {
   type EntryType,
@@ -1858,6 +1858,10 @@ async function headless(
   const usages: TurnUsage[] = [];
   const maxTurns = positiveIntegerOption(options["max-turns"], 12);
   const verificationCadence = new VerificationCadence();
+  const focusedVerification: Array<{
+    readonly plan: unknown;
+    readonly report: VerificationReport;
+  }> = [];
   try {
     for (let turn = 0; code !== 2 && turn < maxTurns; turn += 1) {
       const meter = new TurnMeter(() => Date.now());
@@ -1911,12 +1915,26 @@ async function headless(
       let impactNotice = "";
       if (result.committedMutation) {
         const { planChangeImpact } = await import("./impact.js");
-        impactNotice = `\n\n${
-          planChangeImpact(
-            workspace.root,
-            run.snapshot().committed.map((entry) => entry.path),
-          ).output
-        }`;
+        const impact = planChangeImpact(
+          workspace.root,
+          run.snapshot().committed.map((entry) => entry.path),
+        );
+        const { planFocusedVerification } = await import("./focused-verification.js");
+        const focusedPlan = planFocusedVerification(workspace.root, impact, commands);
+        impactNotice = `\n\n${impact.output}\n\n${focusedPlan.output}`;
+        if (focusedPlan.commands.length > 0) {
+          const report = await verify(
+            {
+              commands: focusedPlan.commands.map((entry) => entry.command),
+              timeoutSeconds: 120,
+            },
+            { cwd: workspace.root, signal: controller.signal },
+          );
+          focusedVerification.push({ plan: focusedPlan, report });
+          impactNotice += report.passed
+            ? `\n\nFocused verification passed (${report.ran.length} command${report.ran.length === 1 ? "" : "s"}). The authoritative completion gate is still required.`
+            : `\n\n${formatForModel(report)}`;
+        }
       }
       messages.push({ role: "assistant", content: result.text });
       messages.push({
@@ -1956,6 +1974,7 @@ async function headless(
     usage: { ...usage, actions },
     state: run.snapshot(),
     impact,
+    focusedVerification,
     hooks: {
       enabled: hooksEnabled,
       ok: hookReports.every((report) => report.ok),
@@ -2259,12 +2278,25 @@ async function interactive(
           let impactNotice = "";
           if (result.committedMutation) {
             const { planChangeImpact } = await import("./impact.js");
-            impactNotice = `\n\n${
-              planChangeImpact(
-                workspace.root,
-                run.snapshot().committed.map((entry) => entry.path),
-              ).output
-            }`;
+            const impact = planChangeImpact(
+              workspace.root,
+              run.snapshot().committed.map((entry) => entry.path),
+            );
+            const { planFocusedVerification } = await import("./focused-verification.js");
+            const focusedPlan = planFocusedVerification(workspace.root, impact, commands);
+            impactNotice = `\n\n${impact.output}\n\n${focusedPlan.output}`;
+            if (focusedPlan.commands.length > 0) {
+              const report = await verify(
+                {
+                  commands: focusedPlan.commands.map((entry) => entry.command),
+                  timeoutSeconds: 120,
+                },
+                { cwd: workspace.root, signal: controller.signal },
+              );
+              impactNotice += report.passed
+                ? `\n\nFocused verification passed (${report.ran.length} command${report.ran.length === 1 ? "" : "s"}). The authoritative completion gate is still required.`
+                : `\n\n${formatForModel(report)}`;
+            }
           }
           transcript.push({
             role: "user",
