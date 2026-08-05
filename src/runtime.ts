@@ -635,11 +635,19 @@ export class Run {
       this.report(results, {
         id: `stall${this.stalls}`,
         ok: false,
-        output: truncated
-          ? "Your edit was cut off before it finished, so nothing could be applied: the change was larger than one reply can hold. Do not resend it. Make a smaller, targeted edit that quotes only the few lines that actually change, or build the result across several edits. For a whole-file rewrite, write a new file instead."
-          : fabricated
-            ? "That reply was the *result* of a tool call, not a tool call. You wrote out what you expected to see, including file contents that were never read -- treat none of it as true. Send the action itself on its own line, for example: READ package.json"
-            : "That reply contained no action, so nothing happened. Send an action -- a read, a command, or an edit -- or report the task complete.",
+        output:
+          this.state.committed.length > 0 && !truncated && !fabricated
+            ? // Observed: a model finishes the work, runs the tests, sees them
+              // pass, and then simply stops replying. The run had committed
+              // changes and a green suite and still reported failure, because
+              // nothing had claimed completion. Naming the state it is actually
+              // in costs one turn and lets the gate decide.
+              "That reply contained no action. You have already committed changes in this run. If the task is now complete, say so with DONE and a one-line summary; if not, send the next action."
+            : truncated
+              ? "Your edit was cut off before it finished, so nothing could be applied: the change was larger than one reply can hold. Do not resend it. Make a smaller, targeted edit that quotes only the few lines that actually change, or build the result across several edits. For a whole-file rewrite, write a new file instead."
+              : fabricated
+                ? "That reply was the *result* of a tool call, not a tool call. You wrote out what you expected to see, including file contents that were never read -- treat none of it as true. Send the action itself on its own line, for example: READ package.json"
+                : "That reply contained no action, so nothing happened. Send an action -- a read, a command, or an edit -- or report the task complete.",
       });
       if (this.stalls >= STALL_LIMIT) {
         this.emit({

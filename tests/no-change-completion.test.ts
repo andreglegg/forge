@@ -123,6 +123,43 @@ describe("a completion that changed nothing", () => {
     expect(provider.turns()).toBe(2);
   }, 60_000);
 
+  test("a named deliverable that was never written is refused", async () => {
+    // The live failure: work landed, the suite stayed green because a file that
+    // does not exist breaks nothing, and Forge exited 0.
+    const root = await greenRepository();
+    writeFileSync(path.join(root, "note.txt"), "old\n");
+    const provider = await claimsCompletion();
+    cleanup.push(
+      async () =>
+        new Promise<void>((resolve, reject) =>
+          provider.server.close((error) => (error ? reject(error) : resolve())),
+        ),
+    );
+    const captured = capturedIO();
+
+    const code = await main(
+      [
+        "run",
+        "Add clamp to note.txt. Add tests/clamp.test.js with cases.",
+        "--repo",
+        root,
+        "--url",
+        provider.url,
+        "--model",
+        "scripted",
+        "--yes",
+        "--max-turns",
+        "4",
+        "--json",
+      ],
+      captured.io,
+    );
+
+    expect(code).not.toBe(0);
+    const result = JSON.parse(captured.out.join("\n")) as { ok: boolean };
+    expect(result.ok).toBe(false);
+  }, 60_000);
+
   test("a run that did commit something is still gated only by verification", async () => {
     const root = await greenRepository();
     writeFileSync(path.join(root, "note.txt"), "old\n");

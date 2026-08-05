@@ -52,6 +52,7 @@ import {
 } from "./compare.js";
 import { type ContextItem, type ContextReceipt, compile, scoreFiles } from "./context.js";
 import { contractHeader, EVENT_CONTRACT_VERSION } from "./contract.js";
+import { missingDeliverables, missingDeliverablesNotice } from "./deliverables.js";
 import { resolveCommandInvocation } from "./exec.js";
 import { formatHookFailure, type HookReport, runProjectHooks } from "./hooks.js";
 import { projectInstructionItems } from "./instructions.js";
@@ -1747,6 +1748,13 @@ async function gate(
       if (!after.ok) return { objection: formatHookFailure(after), report: null };
     }
     return { objection, report: null };
+  }
+  // Checked before the suite runs. A green suite cannot notice a file that was
+  // never written, and running it first would spend a full verification on a
+  // completion that is already known to be incomplete.
+  const missing = missingDeliverables(workspace.root, task);
+  if (missing.length > 0) {
+    return { objection: missingDeliverablesNotice(missing), report: null };
   }
   // Announced through the run's own event stream rather than printed here.
   // Printing directly raced the event subscriber and put this line above the

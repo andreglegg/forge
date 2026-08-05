@@ -87,3 +87,45 @@ were never read. The recorded replies are in
 
 Neither fix is measured against a benchmark. Both are mechanism: one removes a
 configuration cliff, the other names a failure that was previously silent.
+
+## Sweep, 2026-08-05: 8 sessions, 2 models, 4 tasks
+
+Run once the daily tier was raised. Each session got a fresh repository, and
+`npm test` was re-run independently afterwards rather than trusting Forge's
+verdict -- which is what made the headline result visible.
+
+| | qwen3-coder-30b-a3b | nemotron-3-nano-30b-a3b |
+|---|---|---|
+| t1 add function + named test file | committed both, green, **exit 1** (silent finish) | **exit 0, ok:true, test file never written** |
+| t2 new module + tests | exit 0, correct | exit 1, nothing committed (no-change rule) |
+| t3 function + named doc file | function only, doc absent, exit 1 | exit 1, oversized edit truncated |
+| t4 rename + update callers | exit 0, correct | exit 1, oversized edit truncated |
+
+**Forge's exit code was wrong in two of eight**, in opposite directions.
+
+**t1/nemotron was a false success.** The task named `tests/clamp.test.js`. The
+model added `clamp`, never wrote the file, claimed completion, and the gate
+agreed because the pre-existing suite was green -- a test file that does not
+exist breaks nothing. This is the gap `DOGFOOD_LEDGER.md` recorded as a known
+limitation, caught in the act with an exit code of 0.
+
+Fixed in `src/deliverables.ts`: a path the task *names* either exists at
+completion or it does not, which is decidable without a second model. Re-running
+the identical task and model afterwards produced both files, a green suite, and
+four independently-verified `clamp` cases -- 11 turns instead of 3, the extra
+turns being the model going back to write what it had skipped.
+
+**t1/qwen was the mirror image.** Both files committed, suite green, `exit 1`.
+The model finished the work, ran the tests, saw them pass, and then returned
+empty replies until the stall breaker stopped the run -- it never claimed
+completion, so Forge never gated it. The stall message now names that state
+("you have already committed changes; say DONE or send the next action") rather
+than the generic no-action text.
+
+Note what was *not* done: "stalled with a green suite" was not made a success.
+t3/qwen is the counterexample sitting in the same table -- function written, doc
+file absent, suite green. Treating green-and-stalled as done would have turned
+that partial delivery into a confident success.
+
+The trace from the silent finish is kept in
+`bench/traces/qwen3-coder-30b-a3b-silent-finish.jsonl`.

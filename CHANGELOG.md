@@ -22,6 +22,8 @@ Found by driving Forge through a real ten-session build with a 14B model; see `b
 - A missing repository-relative module is classified as a code failure rather than a broken toolchain, and Python's `No module named` spelling is recognised.
 - A failed SEARCH anchor now shows the closest real lines from the file.
 - The context window advertised by the endpoint is used when neither `--context` nor a profile sets one, instead of falling back to a 3000-token reply budget that truncated every large edit against a 256k-context model.
+- A completion is refused when a path the task named does not exist. Verification runs the project's existing commands and cannot notice a file that was never written; observed live, a model skipped a named test file, claimed completion, and was believed because the pre-existing suite was green.
+- A stalled reply in a run that has already committed changes now says so, instead of the generic no-action message, so a model that finished the work but never claimed completion can be gated rather than failed.
 - A reply that fabricates a tool result instead of sending a tool call is recognised, recorded as `hallucinated_tool_result`, and answered with a message saying the contents were never read.
 
 ### Changed
