@@ -617,6 +617,31 @@ function parseAttempt(
   };
 }
 
+/**
+ * The environment the benchmark's own agent process gets.
+ *
+ * `execBounded` builds a credential-free environment on purpose: what it
+ * usually runs is a command the model proposed, and that must never see an API
+ * key. The benchmark is the one caller spawning *Forge itself*, which is not
+ * model output and cannot reach its provider without the key.
+ *
+ * Every benchmark to date used a local unauthenticated endpoint, so the gap was
+ * invisible until a hosted provider answered the spawned agent's first
+ * completion with HTTP 401 -- once per case, recorded as an infrastructure
+ * error. Only the configured key variable is forwarded, and only when set.
+ */
+export function benchmarkAgentEnvironment(
+  output: string,
+  keyEnv = "FORGE_API_KEY",
+): Record<string, string> {
+  const env: Record<string, string> = {
+    GRADLE_USER_HOME: path.join(output, "tool-cache", "gradle"),
+  };
+  const key = process.env[keyEnv];
+  if (key !== undefined && key !== "") env[keyEnv] = key;
+  return env;
+}
+
 async function runAttempt(
   prompt: string,
   repository: string,
@@ -651,7 +676,7 @@ async function runAttempt(
     cwd: repository,
     timeoutSeconds: options.timeoutSeconds ?? 900,
     maxOutputChars: 200_000,
-    extraEnv: { GRADLE_USER_HOME: path.join(options.output, "tool-cache", "gradle") },
+    extraEnv: benchmarkAgentEnvironment(options.output),
   });
   return parseAttempt(number, turnsBudget, result.output, result);
 }

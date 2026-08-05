@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, test } from "vitest";
 import {
+  benchmarkAgentEnvironment,
   caseId,
   classifyPolyglotFailure,
   diagnosticExcerpt,
@@ -506,5 +507,42 @@ describe("Polyglot failure classification", () => {
     ).toBe(true);
     expect(isPolyglotInfrastructureFailure("expected HTTP 409 but got HTTP 500")).toBe(false);
     expect(isPolyglotInfrastructureFailure("expected 2 but got 3")).toBe(false);
+  });
+});
+
+describe("an authenticated endpoint", () => {
+  /**
+   * Every benchmark to date ran against a local unauthenticated endpoint, so
+   * this never surfaced: `execBounded` builds a credential-free environment on
+   * purpose -- the code it runs may be code the model just wrote -- and the
+   * benchmark spawns `forge run` through it. Against a hosted provider the
+   * spawned agent therefore preflighted fine and got HTTP 401 on the first
+   * completion, once per case, reported as an infrastructure error.
+   *
+   * The agent Forge spawns is Forge, not model output. It gets the key; the
+   * model's own commands still do not.
+   */
+  test("forwards the provider credential to the agent it spawns", () => {
+    const previous = process.env["FORGE_API_KEY"];
+    process.env["FORGE_API_KEY"] = "sk-test-value";
+    try {
+      const env = benchmarkAgentEnvironment("/tmp/out");
+      expect(env["FORGE_API_KEY"]).toBe("sk-test-value");
+      expect(env["GRADLE_USER_HOME"]).toContain("tool-cache");
+    } finally {
+      if (previous === undefined) delete process.env["FORGE_API_KEY"];
+      else process.env["FORGE_API_KEY"] = previous;
+    }
+  });
+
+  test("adds nothing when no credential is set", () => {
+    const previous = process.env["FORGE_API_KEY"];
+    delete process.env["FORGE_API_KEY"];
+    try {
+      const env = benchmarkAgentEnvironment("/tmp/out");
+      expect("FORGE_API_KEY" in env).toBe(false);
+    } finally {
+      if (previous !== undefined) process.env["FORGE_API_KEY"] = previous;
+    }
   });
 });
