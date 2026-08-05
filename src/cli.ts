@@ -1908,10 +1908,20 @@ async function headless(
       }
       progress.observe(result.results);
       verificationCadence.observe(result);
+      let impactNotice = "";
+      if (result.committedMutation) {
+        const { planChangeImpact } = await import("./impact.js");
+        impactNotice = `\n\n${
+          planChangeImpact(
+            workspace.root,
+            run.snapshot().committed.map((entry) => entry.path),
+          ).output
+        }`;
+      }
       messages.push({ role: "assistant", content: result.text });
       messages.push({
         role: "user",
-        content: `${observationsFrom(result.results, result.guardNotice)}${progress.steer() ?? ""}${verificationCadence.steer() ?? ""}`,
+        content: `${observationsFrom(result.results, result.guardNotice)}${impactNotice}${progress.steer() ?? ""}${verificationCadence.steer() ?? ""}`,
       });
     }
   } catch (error) {
@@ -1934,12 +1944,18 @@ async function headless(
   sessions.save(sessionId, run.journal);
   const usage = summarize(usages);
   const actions = collected.filter((event) => event.type === "action.proposed").length;
+  const committedPaths = run.snapshot().committed.map((entry) => entry.path);
+  const impact =
+    committedPaths.length === 0
+      ? null
+      : (await import("./impact.js")).planChangeImpact(workspace.root, committedPaths);
   const resultDocument: HeadlessResultDocument = {
     ok: code === 0,
     session: sessionId,
     mode,
     usage: { ...usage, actions },
     state: run.snapshot(),
+    impact,
     hooks: {
       enabled: hooksEnabled,
       ok: hookReports.every((report) => report.ok),
@@ -2240,9 +2256,19 @@ async function interactive(
           }
           progress.observe(result.results);
           verificationCadence.observe(result);
+          let impactNotice = "";
+          if (result.committedMutation) {
+            const { planChangeImpact } = await import("./impact.js");
+            impactNotice = `\n\n${
+              planChangeImpact(
+                workspace.root,
+                run.snapshot().committed.map((entry) => entry.path),
+              ).output
+            }`;
+          }
           transcript.push({
             role: "user",
-            content: `${observationsFrom(result.results, result.guardNotice)}${progress.steer() ?? ""}${verificationCadence.steer() ?? ""}`,
+            content: `${observationsFrom(result.results, result.guardNotice)}${impactNotice}${progress.steer() ?? ""}${verificationCadence.steer() ?? ""}`,
           });
         }
       } catch (error) {

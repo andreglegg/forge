@@ -82,12 +82,13 @@ Exit reached: when a task explicitly names a TypeScript/JavaScript symbol, Forge
 
 ### Milestone 3 — change-aware verification
 
-- Record files changed by the current run.
-- Map changes to package roots, inbound dependency closure, and candidate tests.
-- Run focused checks while iterating, then the configured authoritative gate before accepting completion.
-- Persist the verification plan and why each command ran.
+- Record files changed by the current run. **Shipped.**
+- Map changes to package roots, inbound dependency closure, and candidate tests. **Shipped.**
+- Feed the bounded impact plan into the next model turn and retain it in headless machine results. **Shipped.**
+- Run focused checks automatically while iterating, then the configured authoritative gate before accepting completion. **Next.**
+- Persist which focused commands ran and why. **Next.**
 
-Exit: monorepo work no longer requires running every package after each small edit, while final completion remains authoritative.
+Partial exit reached: Forge now identifies affected packages and candidate tests from actual committed paths while preserving the authoritative full completion gate. Full exit requires safe command synthesis and execution for focused checks.
 
 ### Milestone 4 — typed recovery
 
@@ -131,8 +132,8 @@ Each pass must inspect the latest repository state, preserve unrelated work, imp
 3. Syntax reference lookup. **Completed.**
 4. Semantic caller resolution. **Completed.**
 5. Dependency-backed automatic context selection. **Completed.**
-6. Change-impact model and focused verification planning. **Next.**
-7. Failure classification and one bounded retry strategy.
+6. Change-impact model and focused verification planning. **Completed for impact evidence; automatic focused command execution remains.**
+7. Failure classification and one bounded retry strategy. **Next.**
 8. Execution-backend interface around existing host/worktree behavior.
 9. Versioned server/event contract foundation.
 

@@ -12,7 +12,7 @@ engineering state.
 | Local suite (15 tasks, 3 trials) | **14/15** every trial, 0 false successes | `bench/DECOMPOSE_INSTRUCTION.md` |
 | Greenfield build | works, then over-reports | same |
 | Model scaling | 7B 4.8% / 14B 11.9-14.3% / 30B-MoE 64-67% | `bench/MODEL_SCALING.md` |
-| Tests | **323 pass, 1 skip** | `npm run check` on 2026-08-05 |
+| Tests | **326 pass, 1 skip** | `npm run check` on 2026-08-05 |
 
 ## Measurement discipline (read before running an experiment)
 
@@ -56,13 +56,15 @@ Git-worktree isolation and verified promotion, named model profiles,
 evidence-preserving compaction, promotion risk scanning, and explicit bounded
 headless lifecycle hooks.
 
-The current working slice adds dependency- and caller-backed automatic context selection:
+The current working slice adds change-impact planning from actual committed paths:
 
-- Tasks that explicitly name up to four code-shaped TypeScript/JavaScript symbols now rank exact declaration, checker-resolved direct caller, syntax-reference, and one-hop module dependency files before the initial model turn.
-- Semantic evidence participates in the existing context score, character budget, repository visibility rules, and `/context` receipt instead of bypassing retrieval controls.
-- Ordinary prose remains on the lightweight lexical path. Automatic semantic context is capped at 200 supported source files to protect first-turn latency; larger repositories can still use explicit `SYMBOL`, `REFERENCES`, and `CALLERS` actions with their existing 10,000-file limits.
-- A regression test proves that `InvoiceService` surfaces both an unrelated declaration file and an aliased constructor caller whose filename shares no task vocabulary.
-- `npm run check` passes 323 tests with one intentional pty skip.
+- `src/impact.ts` maps current indexed mutations through bounded inbound TypeScript/JavaScript dependency closure.
+- Plans report owning package roots and rank candidate tests: directly affected tests first, then same-stem tests, then tests inside affected packages.
+- The plan is appended to the next model observation after each successful mutation in both headless and interactive sessions.
+- Headless `--json` and `--stream-json` final results retain the same structured impact evidence.
+- Deleted or moved-away paths are reported as unanalyzable rather than assigned invented dependencies or tests.
+- Impact evidence is advisory for iteration. It does not weaken, replace, or narrow the configured authoritative completion gate.
+- Focused impact/context tests pass 20/20; `npm run check` passes 326 tests with one intentional pty skip.
 
 ### Historical verification-gate context
 
@@ -74,7 +76,7 @@ failed 1 run in 6. Confirmation prevents that pass from laundering a bad change.
 
 ## Open, in product-plan order
 
-1. **Change-impact analysis and focused verification planning.** Map run-mutated paths to packages, inbound dependency closure, and candidate tests while preserving the authoritative full completion gate.
+1. **Automatic focused verification execution.** Synthesize safe package/test commands from the shipped impact evidence, run them during iteration, and persist exactly which commands ran and why. The authoritative full completion gate must remain unchanged.
 2. **Failure-class-specific recovery.** Replace generic retry prompting with bounded strategies for syntax, type, test, timeout, infrastructure, and no-progress failures.
 3. **Execution-backend interface and optional Docker/Podman isolation.** Current worktrees isolate repository mutations only; commands still run on the host.
 4. **Versioned server/event contract**, followed by IDE clients, MCP, and a small permissioned extension API.
