@@ -627,13 +627,19 @@ export class Run {
     if (turn.proposals.length === 0 && turn.final === null) {
       this.stalls += 1;
       const truncated = turn.repairs?.includes("truncated_edit_block") === true;
+      // Role confusion, and worth its own message: telling a model that
+      // answered its own read to "send an action" does not tell it that the
+      // file contents it just invented were never real.
+      const fabricated = turn.repairs?.includes("hallucinated_tool_result") === true;
       const results: ActionResult[] = [];
       this.report(results, {
         id: `stall${this.stalls}`,
         ok: false,
         output: truncated
           ? "Your edit was cut off before it finished, so nothing could be applied: the change was larger than one reply can hold. Do not resend it. Make a smaller, targeted edit that quotes only the few lines that actually change, or build the result across several edits. For a whole-file rewrite, write a new file instead."
-          : "That reply contained no action, so nothing happened. Send an action -- a read, a command, or an edit -- or report the task complete.",
+          : fabricated
+            ? "That reply was the *result* of a tool call, not a tool call. You wrote out what you expected to see, including file contents that were never read -- treat none of it as true. Send the action itself on its own line, for example: READ package.json"
+            : "That reply contained no action, so nothing happened. Send an action -- a read, a command, or an edit -- or report the task complete.",
       });
       if (this.stalls >= STALL_LIMIT) {
         this.emit({

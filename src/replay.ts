@@ -68,6 +68,10 @@ export function categorize(repairs: readonly string[], raw: string): string {
   if (repairs.includes("orphan_search_block")) return "orphan_block";
   if (repairs.some((repair) => repair.startsWith("bad_directive"))) return "bad_directive";
   if (repairs.includes("invalid_edit_block")) return "invalid_edit";
+  // A new axis, appended rather than folded into no_action: a model answering
+  // its own tool call is a different defect from one that simply said nothing,
+  // and the two call for different work.
+  if (repairs.includes("hallucinated_tool_result")) return "tool_result_echo";
   if (raw.trim() === "") return "empty";
   return "no_action";
 }

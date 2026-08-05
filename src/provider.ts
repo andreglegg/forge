@@ -66,6 +66,16 @@ export interface ProviderProbe {
   readonly selectedModel: string | null;
   readonly completionChecked: boolean;
   readonly error: string | null;
+  /**
+   * The context window the endpoint advertises for the selected model, or null
+   * when it advertises none.
+   *
+   * Optional metadata, read where offered and never required: OpenRouter
+   * publishes `context_length` in `/models`, Ollama and most OpenAI-compatible
+   * servers publish nothing. Worth reading because the alternative is a guess
+   * that has already cost a run -- see `replyBudget`.
+   */
+  readonly contextWindow: number | null;
 }
 
 export interface ProviderProbeOptions {
@@ -98,14 +108,25 @@ export async function probeProvider(
         models: [],
         selectedModel: null,
         completionChecked: false,
+        contextWindow: null,
         error: `HTTP ${response.status} from ${config.baseUrl}/models: ${clip(await response.text())}`,
       };
     }
-    const parsed = (await response.json()) as { data?: Array<{ id?: unknown }> };
-    const models = (parsed.data ?? []).flatMap((item) =>
+    const parsed = (await response.json()) as {
+      data?: Array<{ id?: unknown; context_length?: unknown }>;
+    };
+    const entries = parsed.data ?? [];
+    const models = entries.flatMap((item) =>
       typeof item.id === "string" && item.id.length > 0 ? [item.id] : [],
     );
     const selectedModel = config.model || models[0] || null;
+    const advertised = entries.find((item) => item.id === selectedModel)?.context_length;
+    // A non-positive or non-integer value is discarded rather than repaired:
+    // sizing a run from a nonsense number is worse than falling back.
+    const contextWindow =
+      typeof advertised === "number" && Number.isInteger(advertised) && advertised > 0
+        ? advertised
+        : null;
     if (selectedModel === null) {
       return {
         ok: false,
@@ -113,6 +134,7 @@ export async function probeProvider(
         models,
         selectedModel: null,
         completionChecked: false,
+        contextWindow,
         error: "the endpoint advertised no usable model ids",
       };
     }
@@ -123,6 +145,7 @@ export async function probeProvider(
         models,
         selectedModel,
         completionChecked: false,
+        contextWindow,
         error: `${config.model} is not advertised by the endpoint`,
       };
     }
@@ -133,6 +156,7 @@ export async function probeProvider(
         models,
         selectedModel,
         completionChecked: false,
+        contextWindow,
         error: null,
       };
     }
@@ -155,6 +179,7 @@ export async function probeProvider(
         models,
         selectedModel,
         completionChecked: true,
+        contextWindow,
         error: `HTTP ${completion.status} from ${config.baseUrl}: ${clip(await completion.text())}`,
       };
     }
@@ -164,6 +189,7 @@ export async function probeProvider(
       models,
       selectedModel,
       completionChecked: true,
+      contextWindow,
       error: null,
     };
   } catch (error) {
@@ -173,6 +199,7 @@ export async function probeProvider(
       models: [],
       selectedModel: config.model || null,
       completionChecked: false,
+      contextWindow: null,
       error: error instanceof Error ? error.message : String(error),
     };
   }

@@ -1132,6 +1132,16 @@ export async function main(argv: readonly string[], io: IO = consoleIO): Promise
       } else io.err(message);
       return 2;
     }
+    // An explicit --context or a profile always wins; this only fills the gap
+    // where Forge would otherwise fall back to a 3000-token reply budget and
+    // truncate every large edit. Observed against a 256k endpoint, where that
+    // fallback ended the run and read as a model failure.
+    if (config.contextWindow <= 0 && provider.contextWindow !== null) {
+      config = { ...config, contextWindow: provider.contextWindow };
+      if (options["json"] !== true && options["stream-json"] !== true) {
+        io.out(`  ⋮ context window ${provider.contextWindow} discovered from the endpoint`);
+      }
+    }
   }
 
   if (command === "compare") {

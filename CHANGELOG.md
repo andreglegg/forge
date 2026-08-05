@@ -21,6 +21,8 @@ Found by driving Forge through a real ten-session build with a 14B model; see `b
 - A read refused for being unchanged is permitted once when the harness itself refused the edit that read was meant to inform, removing a deadlock between the two guards.
 - A missing repository-relative module is classified as a code failure rather than a broken toolchain, and Python's `No module named` spelling is recognised.
 - A failed SEARCH anchor now shows the closest real lines from the file.
+- The context window advertised by the endpoint is used when neither `--context` nor a profile sets one, instead of falling back to a 3000-token reply budget that truncated every large edit against a 256k-context model.
+- A reply that fabricates a tool result instead of sending a tool call is recognised, recorded as `hallucinated_tool_result`, and answered with a message saying the contents were never read.
 
 ### Changed
 

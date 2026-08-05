@@ -51,6 +51,34 @@ export interface Codec {
 type Section = "none" | "search" | "replace";
 
 /**
+ * A reply that answers itself.
+ *
+ * Observed from a 30B model: instead of `READ package.json` it emitted
+ * `{"status":"read","path":"package.json","contents":"..."}` -- the shape of an
+ * *observation*, with contents it invented, naming a package that is not in the
+ * repository. Role confusion rather than a malformed action, so nothing in the
+ * directive grammar could catch it and the turn decoded to silence.
+ *
+ * Detected by parsing, not by pattern-matching prose: the text must be a JSON
+ * object carrying a status alongside a result-shaped field. Prose that merely
+ * mentions a path and a status does not parse, and so cannot trip this.
+ */
+function looksLikeToolResult(text: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) return false;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch {
+    return false;
+  }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return false;
+  const keys = new Set(Object.keys(parsed as Record<string, unknown>));
+  if (!keys.has("status")) return false;
+  return ["contents", "output", "result", "content", "path"].some((key) => keys.has(key));
+}
+
+/**
  * SEARCH/REPLACE plus one-line directives.
  *
  * Line-oriented, because that is what makes it robust for a weak model: there
@@ -102,6 +130,10 @@ export class TextCodec implements Codec {
       // An unterminated block is a truncated turn. Recorded as a repair
       // category so the reliability ledger can count it, and dropped.
       this.repairs.add("truncated_edit_block");
+    }
+    const text = this.prose.join("\n").trim();
+    if (this.proposals.length === 0 && this.final === null && looksLikeToolResult(text)) {
+      this.repairs.add("hallucinated_tool_result");
     }
     return {
       text: this.prose.join("\n").trim(),
