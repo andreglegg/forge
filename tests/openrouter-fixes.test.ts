@@ -116,28 +116,43 @@ describe("a reply that fabricates a tool result", () => {
   });
 });
 
-describe("the captured trace stays a regression", () => {
+describe("the captured traces stay regressions", () => {
   /**
    * `bench/traces/` is the free half of the loop. A live model discovers a
    * failure once -- rate-limited, occasionally paid -- and the reply is kept
    * here, where the decoder is measured against it forever at no cost. The
-   * scratchpad that held the original run was wiped hours after it produced
-   * this, which is exactly why the fixture lives in the repository.
+   * scratchpad holding the original run was wiped hours after it produced the
+   * first of these, which is why captured traces belong in the repository.
+   *
+   * Asserted per fixture rather than over the directory: each file pins its own
+   * defect, so adding the next capture cannot silently redefine what an older
+   * one was proving.
    */
-  test("the recorded nemotron replies still classify as fabricated results", async () => {
-    const directory = path.join(
-      path.dirname(fileURLToPath(import.meta.url)),
-      "..",
-      "bench",
-      "traces",
-    );
-    const records = [];
-    for await (const record of loadTraces(directory)) records.push(record);
+  const TRACES = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "bench", "traces");
 
+  async function load(file: string) {
+    const records = [];
+    for await (const record of loadTraces(path.join(TRACES, file))) records.push(record);
     expect(records.length).toBeGreaterThan(0);
+    return records;
+  }
+
+  test("the nemotron replies still classify as fabricated tool results", async () => {
+    const records = await load("nemotron-30b-a3b-hallucinated-result.jsonl");
     const report = score(records);
+
     expect(report.byRepair["hallucinated_tool_result"]).toBe(records.length);
     expect(report.byCategory["tool_result_echo"]).toBe(records.length);
     expect(report.conversionRate).toBe(0);
+  });
+
+  test("the qwen silent finish still shows work, then empty replies", async () => {
+    // Two turns that decoded actions, then two that decoded nothing at all --
+    // the model going quiet after the suite went green.
+    const records = await load("qwen3-coder-30b-a3b-silent-finish.jsonl");
+    const report = score(records);
+
+    expect(report.converted).toBeGreaterThan(0);
+    expect(report.byCategory["empty"]).toBeGreaterThan(0);
   });
 });
