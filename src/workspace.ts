@@ -178,6 +178,68 @@ export interface Preview {
 }
 
 const PROTECTED_ROOTS = new Set([".git", ".forge", ".codex-bridge"]);
+/**
+ * Names that read as a source file rather than a directory.
+ *
+ * Deliberately a closed list of code and config extensions, not "anything with
+ * a dot": `.github`, `v1.2`, and `my.project` are ordinary directory names and
+ * must stay legal.
+ */
+const SOURCE_FILE_NAME =
+  /\.(?:[cm]?[jt]sx?|py|rb|go|rs|java|kt|swift|c|h|cc|cpp|hpp|cs|php|sh|json|ya?ml|toml|md|txt|html|css|scss)$/i;
+
+/** Lines of real file shown around a failed anchor, and the most it may cost. */
+const ANCHOR_CONTEXT_LINES = 3;
+const ANCHOR_HINT_CHARS = 700;
+
+/**
+ * The text the model probably meant.
+ *
+ * A mis-quoted SEARCH anchor is the most common editing failure these models
+ * have, and "read the file again and quote it exactly" is advice the model
+ * already believes it followed -- observed live, a 14B re-sent the identical
+ * failing anchor five times against `src/account.js`. Showing the closest real
+ * lines turns a refusal into the correction, without a second model call:
+ * the file is already in hand, and the comparison is deterministic.
+ */
+function nearestAnchor(content: string, search: string): string {
+  const wanted = search.split("\n").find((line) => line.trim() !== "");
+  if (wanted === undefined) return "";
+  const target = normalizedTokens(wanted);
+  if (target.size === 0) return "";
+  const lines = content.split("\n");
+  let bestIndex = -1;
+  let bestScore = 0;
+  for (const [index, line] of lines.entries()) {
+    const score = tokenOverlap(target, normalizedTokens(line));
+    if (score > bestScore) {
+      bestScore = score;
+      bestIndex = index;
+    }
+  }
+  // Below roughly a third shared, the "closest" line is noise, and printing
+  // noise as a suggestion is worse than printing nothing.
+  if (bestIndex === -1 || bestScore < 0.34) return "";
+  const from = Math.max(0, bestIndex - ANCHOR_CONTEXT_LINES);
+  const to = Math.min(lines.length, bestIndex + ANCHOR_CONTEXT_LINES + 1);
+  const shown = lines
+    .slice(from, to)
+    .map((line, offset) => `${from + offset + 1}: ${line}`)
+    .join("\n");
+  return `\nThe closest text actually in the file is lines ${from + 1}-${to}:\n${shown.slice(0, ANCHOR_HINT_CHARS)}`;
+}
+
+function normalizedTokens(line: string): Set<string> {
+  return new Set(line.split(/[^A-Za-z0-9_$]+/).filter((token) => token !== ""));
+}
+
+function tokenOverlap(wanted: Set<string>, candidate: Set<string>): number {
+  if (candidate.size === 0) return 0;
+  let shared = 0;
+  for (const token of wanted) if (candidate.has(token)) shared += 1;
+  return shared / Math.max(wanted.size, candidate.size);
+}
+
 const MAX_TREE_ENTRIES = 10_000;
 const MAX_TREE_BYTES = 128 * 1024 * 1024;
 
@@ -442,19 +504,28 @@ export class Workspace {
   preview(proposal: EditProposal): Preview {
     const { relative, absolute: target } = normalizeMutationPath(this.root, proposal.path);
     const exists = entryExists(target);
-    if (proposal.create && exists) {
-      throw new WorkspaceError(`${relative} already exists; edit it instead of creating it`);
-    }
-    if (!proposal.create && !exists) {
-      throw new WorkspaceError(`${relative} does not exist; use CREATE to add it`);
-    }
+    // What the entry *is* outranks whether it was supposed to be there. A live
+    // run met a directory named `money.js`, was told "already exists; edit it
+    // instead of creating it", and spent six turns trying to edit a directory
+    // -- the advice was impossible, and the real obstacle was never named.
     if (exists) {
       const stat = lstatSync(target);
+      if (stat.isDirectory()) {
+        throw new WorkspaceError(
+          `${relative} is a directory, not a file. Remove it with DELETE ${relative} or write to a different path.`,
+        );
+      }
       if (stat.isSymbolicLink() || !stat.isFile()) {
         throw new WorkspaceError(
           `${relative} is not a regular file; use a filesystem directive instead`,
         );
       }
+    }
+    if (proposal.create && exists) {
+      throw new WorkspaceError(`${relative} already exists; edit it instead of creating it`);
+    }
+    if (!proposal.create && !exists) {
+      throw new WorkspaceError(`${relative} does not exist; use CREATE to add it`);
     }
     const beforeBytes = exists ? readFileSync(target) : null;
     const before = beforeBytes?.toString("utf8") ?? "";
@@ -470,7 +541,7 @@ export class Workspace {
       const found = countOf(after, operation.search);
       if (found === 0) {
         throw new WorkspaceError(
-          `the search text was not found in ${relative}. Read the file again and quote it exactly.`,
+          `the search text was not found in ${relative}. Read the file again and quote it exactly.${nearestAnchor(after, operation.search)}`,
         );
       }
       if (found !== operation.expectedMatches) {
@@ -569,6 +640,17 @@ export class Workspace {
   /** Preview recursive directory creation, recording only missing components. */
   previewMkdir(relativeInput: string): Preview {
     const { relative, absolute } = normalizeMutationPath(this.root, relativeInput);
+    // Refused rather than obeyed, per the rule about deterministic validators
+    // over recoverable ambiguity. A model that meant to write `src/money.js`
+    // and said MKDIR gets one clear correction here; without it the directory
+    // wins, shadows the file forever, and no later edit can succeed. A
+    // directory genuinely named `*.js` is legal and vanishingly rare, and this
+    // costs it one differently-spelled path.
+    if (SOURCE_FILE_NAME.test(path.basename(relative))) {
+      throw new WorkspaceError(
+        `${relative} looks like a file, not a directory. Use CREATE ${relative} to write the file, or choose a directory name without a file extension.`,
+      );
+    }
     if (entryExists(absolute)) {
       throw new WorkspaceError(`${relative} already exists`);
     }

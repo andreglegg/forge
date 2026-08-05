@@ -51,6 +51,29 @@ const TOOLCHAIN_PATTERNS = [
   /could not determine executable/i,
   /module .* not found/i,
   /cannot find module/i,
+  // Python's spelling, which the patterns above do not cover.
+  /no module named/i,
+];
+
+/**
+ * A missing module that is the repository's own.
+ *
+ * "Cannot find module" is the single most common intermediate state in a
+ * JavaScript or Python repair: a test imports the file the model has not
+ * written yet. Observed live -- a test importing `../src/money.js` was
+ * classified `toolchain`, which is budgeted for one retry because a missing
+ * *executable* is not something the model can fix by editing code. The run
+ * stopped while the actual repair was one CREATE away.
+ *
+ * The discriminator is the specifier. A relative or absolute path is a file in
+ * this repository and therefore code the model owns; a bare specifier
+ * (`express`, `pytest`) is an uninstalled dependency and genuinely environment
+ * work, which is what the toolchain class is for.
+ */
+const REPOSITORY_MODULE_PATTERNS = [
+  /(?:cannot find module|module not found:?)[\s'"]*(?:[.]{1,2}\/|\/)/i,
+  /cannot find module\s+['"][^'"]*\/[^'"]*['"]/i,
+  /no module named\s+['"][.]/i,
 ];
 
 const INFRASTRUCTURE_PATTERNS = [
@@ -84,11 +107,18 @@ export function classifyVerificationRun(run: VerificationRun): ClassifiedFailure
       reason: "external infrastructure failed",
     };
   }
-  if (matchesAny(output, TOOLCHAIN_PATTERNS)) {
+  if (matchesAny(output, TOOLCHAIN_PATTERNS) && !matchesAny(output, REPOSITORY_MODULE_PATTERNS)) {
     return {
       class: "toolchain",
       command: run.command,
       reason: "required executable or dependency is unavailable",
+    };
+  }
+  if (matchesAny(output, REPOSITORY_MODULE_PATTERNS)) {
+    return {
+      class: "test",
+      command: run.command,
+      reason: "a module in this repository could not be resolved",
     };
   }
   if (matchesAny(output, SYNTAX_PATTERNS)) {

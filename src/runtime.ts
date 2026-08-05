@@ -385,6 +385,13 @@ function mutationResult(preview: Preview): string {
   }
 }
 
+/** The repository path a mutating proposal targets, or "" if it names none. */
+function mutationPathOf(proposal: ActionProposal): string {
+  if (proposal.kind === "edit") return proposal.path;
+  const target = proposal.arguments["path"];
+  return typeof target === "string" ? target : "";
+}
+
 function canonicalKey(proposal: ActionProposal): string {
   const render = (value: unknown): string => {
     if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null";
@@ -414,14 +421,22 @@ class LoopGuard {
   private readonly readActions = new Set<string>();
   private readonly completeReadRevisions = new Set<string>();
   private readonly counts = new Map<string, number>();
-  private readonly failed = new Set<string>();
+  /** Keyed by action, valued by *why* it failed -- see `recordFailure`. */
+  private readonly failed = new Map<string, string>();
+  /** Paths whose next re-read is legitimate; see `allowReadAgain`. */
+  private readonly readAgain = new Set<string>();
 
   check(proposal: ActionProposal, workspace: Workspace): string | null {
     const key = canonicalKey(proposal);
     const count = (this.counts.get(key) ?? 0) + 1;
     this.counts.set(key, count);
-    if (this.failed.has(key)) {
-      return "This exact action already failed and nothing has changed since. Change the arguments or take a different approach.";
+    const previousReason = this.failed.get(key);
+    if (previousReason !== undefined) {
+      // The reason is repeated, not just the fact. A live run met a directory
+      // where it wanted a file and was told only "this already failed" four
+      // times running; the one message that would have unstuck it -- what was
+      // actually wrong -- was thrown away after the first attempt.
+      return `This exact action already failed and nothing has changed since: ${previousReason} Change the arguments or take a different approach.`;
     }
     if (count > 3) {
       return `This exact action has been proposed ${count} times. Do something different.`;
@@ -436,11 +451,25 @@ class LoopGuard {
         const rangeKey = `${typeof start === "number" ? start : ""}-${typeof end === "number" ? end : ""}`;
         const readActionKey = `${revisionKey}:${rangeKey}`;
         if (this.readActions.has(readActionKey)) {
+          // Consumed, not merely checked: this excuses one re-read, so a model
+          // that keeps asking without acting still meets the guard.
+          if (this.readAgain.delete(target)) return null;
           return `${target}${rangeKey === "-" ? "" : `:${rangeKey}`} has not changed since you read that exact range; use another range or act on the contents above.`;
         }
       }
     }
     return null;
+  }
+
+  /**
+   * Permit one repeat read of `target`, even at an unchanged revision.
+   *
+   * Used where the harness itself took away the model's look at a file -- it
+   * refused an edit for arriving alongside its read -- so that complying is a
+   * legal move rather than the second half of a deadlock.
+   */
+  allowReadAgain(target: string): void {
+    if (target !== "") this.readAgain.add(target);
   }
 
   /** Record only a read the tool actually completed successfully. */
@@ -478,8 +507,8 @@ class LoopGuard {
     return revision !== null && this.completeReadRevisions.has(`${target}@${revision}`);
   }
 
-  recordFailure(proposal: ActionProposal): void {
-    this.failed.add(canonicalKey(proposal));
+  recordFailure(proposal: ActionProposal, reason = ""): void {
+    this.failed.set(canonicalKey(proposal), reason.trim());
   }
 
   /**
@@ -491,6 +520,7 @@ class LoopGuard {
   recordMutation(): void {
     this.failed.clear();
     this.counts.clear();
+    this.readAgain.clear();
   }
 }
 
@@ -649,6 +679,13 @@ export class Run {
       }
 
       if (looksFirst && sawObservation && mutates(proposal)) {
+        // Deferring this edit costs the model its only look at the file, so
+        // the re-read it will almost certainly ask for next is unblocked here.
+        // Without that, the two guards deadlock: this one refuses the edit for
+        // arriving with a read, and the unchanged-range guard then refuses the
+        // read that would let the model comply. Observed live, and the largest
+        // single consumer of turns in the session that surfaced it.
+        this.guard.allowReadAgain(mutationPathOf(proposal));
         this.report(results, {
           id,
           ok: false,
@@ -700,13 +737,15 @@ export class Run {
           preview = this.previewMutation(proposal);
         } catch (error) {
           // A mutation that cannot be previewed cannot be approved. The reason
-          // goes back to the model, which is how it corrects the target.
-          this.guard.recordFailure(proposal);
+          // goes back to the model, which is how it corrects the target -- and
+          // is retained, so a repeat of the same action repeats the reason.
+          const reason = error instanceof Error ? error.message : String(error);
+          this.guard.recordFailure(proposal, reason);
           failedThisTurn = true;
           this.report(results, {
             id,
             ok: false,
-            output: error instanceof Error ? error.message : String(error),
+            output: reason,
           });
           continue;
         }
@@ -784,7 +823,7 @@ export class Run {
       }
       const result = await this.effects.runTool(proposal);
       if (!result.ok) {
-        this.guard.recordFailure(proposal);
+        this.guard.recordFailure(proposal, result.output);
         failedThisTurn = true;
       } else {
         this.guard.recordReadSuccess(proposal, this.effects.workspace);
