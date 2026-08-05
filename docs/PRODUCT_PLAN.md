@@ -32,7 +32,7 @@ Goal: give small models enough deterministic repository understanding to make co
 Goal: make every attempted change bounded, recoverable, independently checked, and able to improve after a failure.
 
 1. Transactional files, commands, sessions, undo, verification, and isolated Git promotion. **Shipped.**
-2. Failure-class-specific retry policies for syntax, type, test, timeout, toolchain, and no-progress failures.
+2. Failure-class-specific recovery guidance for syntax, type, test, timeout, toolchain, infrastructure, flaky, and unknown verification failures. **Shipped.** Bounded automatic retry execution and no-progress recovery remain planned.
 3. Verification planning: focused checks during development, authoritative project gates before completion. **Shipped for deterministic Node test commands.**
 4. Execution-backend interface separating host, Git-worktree, and container execution.
 5. Optional Docker/Podman backend with network-off default, restricted user, read-only host mounts, and CPU/memory/process/disk limits.
@@ -92,9 +92,10 @@ Exit reached for the supported boundary: Forge identifies affected packages/test
 
 ### Milestone 4 — typed recovery
 
-- Classify verification and action failures.
-- Apply bounded retry strategies per class.
-- Stop retries on infrastructure failures, repeated unchanged actions, or exhausted evidence.
+- Classify verification failures into syntax, type, test, timeout, toolchain, infrastructure, flaky, and unknown classes. **Shipped.**
+- Attach one bounded class-specific recovery directive to model feedback. **Shipped.**
+- Add action/no-progress classification and automatic bounded retry execution. **Planned.**
+- Stop retries on infrastructure failures, repeated unchanged actions, or exhausted evidence. **Planned.**
 - Measure recovery rate and false-success rate.
 
 Exit: retries are mechanism-driven rather than a generic fresh prompt.
@@ -133,7 +134,7 @@ Each pass must inspect the latest repository state, preserve unrelated work, imp
 4. Semantic caller resolution. **Completed.**
 5. Dependency-backed automatic context selection. **Completed.**
 6. Change-impact model and focused verification execution. **Completed for deterministic Node test commands.**
-7. Failure classification and one bounded retry strategy. **Next.**
+7. Verification failure classification and one bounded recovery directive. **Completed.** Automatic retry execution and no-progress classification remain.
 8. Execution-backend interface around existing host/worktree behavior.
 9. Versioned server/event contract foundation.
 

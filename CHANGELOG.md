@@ -30,6 +30,7 @@ All notable product changes are recorded here. Forge follows semantic versioning
 - Revision-bound `SYMBOL`, syntax `REFERENCES`, and checker-resolved `CALLERS` inspection for TypeScript/JavaScript, with text/native parity, exact ranges, source revisions, relative-import alias handling, lexical-scope filtering, and deep-project end-to-end coverage.
 - A published product plan covering project intelligence, reliable execution, integration boundaries, and release maturity.
 - npm, pnpm, Yarn, and Bun verification detection with root `check` preference, plus shell-free package-specific verification through validated repository working directories.
+- Verification failure classification for syntax, type, assertion, timeout, missing toolchain, infrastructure, flaky, and unknown failures, with one bounded class-specific recovery directive.
 
 ### Reliability baseline
 

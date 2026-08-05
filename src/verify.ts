@@ -23,6 +23,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { type ExecResult, execBounded, resolveCommandInvocation } from "./exec.js";
+import { classifyVerificationReport, recoveryDirective } from "./recovery.js";
 
 /**
  * A generous default: the point of this module is to run a project's real test
@@ -267,6 +268,7 @@ export function formatForModel(report: VerificationReport): string {
   // and patch a symptom. What needs finding is the shared state.
   if (report.flaky) {
     const failures = report.ran.filter((run) => run.code !== 0);
+    const directive = recoveryDirective(classifyVerificationReport(report));
     return [
       "Verification is FLAKY: the suite passed and then failed on a re-run of the same commands.",
       "The code is not necessarily wrong -- the suite does not give the same answer twice.",
@@ -277,6 +279,7 @@ export function formatForModel(report: VerificationReport): string {
       ...failures.map(
         (run) => `$ ${quote(run.command)}\n${clip(run.output.trimEnd(), MIN_COMMAND_BUDGET)}`,
       ),
+      ...(directive === null ? [] : ["", directive]),
     ].join("\n");
   }
 
@@ -293,8 +296,12 @@ export function formatForModel(report: VerificationReport): string {
   const shown = Math.max(1, Math.floor(MODEL_OUTPUT_BUDGET / budget));
   const detailed = failures.slice(0, shown);
   const omittedCommands = failures.slice(shown);
+  const classified = classifyVerificationReport(report);
+  const directive = recoveryDirective(classified);
+  const classes = [...new Set(classified.map((failure) => failure.class))];
   const lines: string[] = [
     `Verification failed: ${failures.length} of ${report.ran.length} command(s) did not pass.`,
+    `Failure class${classes.length === 1 ? "" : "es"}: ${classes.join(", ")}.`,
   ];
   for (const run of detailed) {
     const status = run.timedOut
@@ -318,6 +325,7 @@ export function formatForModel(report: VerificationReport): string {
   if (survivors.length > 0) {
     lines.push("", `Still passing: ${survivors.map((run) => quote(run.command)).join(", ")}.`);
   }
+  if (directive !== null) lines.push("", directive);
   return lines.join("\n");
 }
 

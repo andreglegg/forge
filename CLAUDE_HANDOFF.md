@@ -12,7 +12,7 @@ engineering state.
 | Local suite (15 tasks, 3 trials) | **14/15** every trial, 0 false successes | `bench/DECOMPOSE_INSTRUCTION.md` |
 | Greenfield build | works, then over-reports | same |
 | Model scaling | 7B 4.8% / 14B 11.9-14.3% / 30B-MoE 64-67% | `bench/MODEL_SCALING.md` |
-| Tests | **330 pass, 1 skip** | `npm run check` on 2026-08-05 |
+| Tests | **340 pass, 1 skip** | `npm run check` on 2026-08-05 |
 
 ## Measurement discipline (read before running an experiment)
 
@@ -56,15 +56,14 @@ Git-worktree isolation and verified promotion, named model profiles,
 evidence-preserving compaction, promotion risk scanning, and explicit bounded
 headless lifecycle hooks.
 
-The current working slice adds deterministic focused verification execution from actual committed paths:
+The current working slice adds typed recovery guidance at the verification boundary:
 
-- `src/impact.ts` maps current indexed mutations through bounded inbound TypeScript/JavaScript dependency closure.
-- Plans report owning package roots and rank candidate tests: directly affected tests first, then same-stem tests, then tests inside affected packages.
-- `src/focused-verification.ts` narrows only configured `npm`/`pnpm`/`yarn`/`bun` test commands, and only to candidate tests owned by that command's package.
-- Focused checks run once after a successful mutation, feed their pass/failure output into the next model turn, and are retained in headless `--json`/`--stream-json` results with exact commands and rationale.
-- Deleted or moved-away paths are reported as unanalyzable rather than assigned invented dependencies or tests.
-- Unsupported `check`, lint, pre-specialized, or ambiguous commands produce no automatic run. The authoritative completion gate remains unchanged.
-- Focused planner/impact/verifier tests pass 28/28; `npm run check` passes 330 tests with one intentional pty skip.
+- `src/recovery.ts` classifies failures as syntax, type, test, timeout, toolchain, infrastructure, flaky, or unknown.
+- Classification is deterministic and based only on retained command metadata and bounded output; it never executes code or asks a model to classify its own failure.
+- `formatForModel` now names the detected class and appends exactly one bounded recovery directive.
+- Timeout recovery forbids repeating the same broad command unchanged; toolchain recovery treats setup as environment work; infrastructure recovery stops speculative code edits and permits at most one retry after checking the reported condition.
+- Flaky verification retains its nondeterminism-specific path and receives a matching bounded directive.
+- Focused recovery/verifier tests pass 30/30; `npm run check` passes 340 tests with one intentional pty skip; `npm run build` passes.
 
 ### Historical verification-gate context
 
@@ -76,7 +75,7 @@ failed 1 run in 6. Confirmation prevents that pass from laundering a bad change.
 
 ## Open, in product-plan order
 
-1. **Failure-class-specific recovery.** Replace generic retry prompting with bounded strategies for syntax, type, test, timeout, infrastructure, and no-progress failures.
+1. **Automatic bounded retry execution and no-progress classification.** Verification failures now have deterministic classes and one recovery directive; the runtime still needs per-class retry budgets and fail-stop rules.
 2. **Execution-backend interface and optional Docker/Podman isolation.** Current worktrees isolate repository mutations only; commands still run on the host.
 3. **Versioned server/event contract**, followed by IDE clients, MCP, and a small permissioned extension API.
 4. **Benchmark follow-up.** The second full-225 replication and current Little Coder comparison remain useful, but no new product slice should claim a score gain without paired evidence.
