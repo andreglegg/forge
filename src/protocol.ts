@@ -297,6 +297,16 @@ export const TOOLS: readonly ToolSpec[] = [
     textForm: "REFERENCES <name>",
   },
   {
+    name: "callers",
+    mutates: false,
+    schema: z.strictObject({
+      query: z.string().min(1),
+      path: z.string().default("."),
+    }),
+    describe: (a) => `find semantic callers of ${JSON.stringify(a["query"])}`,
+    textForm: "CALLERS <name>",
+  },
+  {
     name: "delete",
     mutates: true,
     schema: z.strictObject({ path: path_ }),
@@ -380,7 +390,6 @@ export function textProtocolPrompt(): string {
     "Reply in plain text. Use these directives, one per line:",
     ...TOOLS.filter((tool) => tool.textForm !== undefined).map((tool) => `  ${tool.textForm}`),
     "To change a file, write an edit block:",
-    "",
     "  EDIT path/to/file.ts",
     "  <<<<<<< SEARCH",
     "  the exact existing text",
@@ -388,7 +397,7 @@ export function textProtocolPrompt(): string {
     "  the replacement text",
     "  >>>>>>> REPLACE",
     "CREATE uses an empty SEARCH; READ path:start-end returns an exact bounded excerpt.",
-    "LIST/GLOB/GREP navigate; RELATED shows modules/tests; SYMBOL/REFERENCES inspect identifiers.",
+    "LIST/GLOB/GREP navigate; RELATED shows modules/tests; SYMBOL/REFERENCES/CALLERS inspect code.",
     "DELETE never targets the root; MOVE/COPY/RENAME require an absent destination.",
     // Reverted from a longer version. Adding eight lines about marker
     // collisions and anchor sizing made things measurably WORSE: the task it
@@ -438,6 +447,9 @@ export function renderProposal(proposal: ActionProposal): string {
     }
     if (proposal.tool === "references") {
       return `REFERENCES ${String(args["query"] ?? "")}`;
+    }
+    if (proposal.tool === "callers") {
+      return `CALLERS ${String(args["query"] ?? "")}`;
     }
     if (proposal.tool === "grep") {
       return `GREP ${String(args["pattern"] ?? "")}`;

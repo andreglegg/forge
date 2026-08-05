@@ -10,6 +10,7 @@ import {
   buildRepositorySymbols,
   extractSourceReferences,
   extractSourceSymbols,
+  findRepositoryCallers,
   findRepositoryReferences,
   findRepositorySymbols,
 } from "../src/symbols.js";
@@ -56,6 +57,15 @@ describe("symbol protocol", () => {
     const proposal = fromText.proposals[0];
     expect(proposal).toBeDefined();
     if (proposal !== undefined) expect(renderProposal(proposal)).toBe("REFERENCES RequestHandler");
+  });
+
+  test("normalizes CALLERS identically in text and native codecs", () => {
+    const fromText = decodeText("CALLERS calculateTotal\n");
+    const fromNative = decodeNative("callers", { query: "calculateTotal", path: "." });
+    expect(fromText.proposals).toEqual(fromNative.proposals);
+    const proposal = fromText.proposals[0];
+    expect(proposal).toBeDefined();
+    if (proposal !== undefined) expect(renderProposal(proposal)).toBe("CALLERS calculateTotal");
   });
 });
 
@@ -164,6 +174,62 @@ describe("syntax reference extraction", () => {
       expect(result.matches).toHaveLength(2);
       expect(result.output).toContain("src/use.ts:4:");
       expect(result.output).toContain("syntax-only");
+    });
+  });
+});
+
+describe("semantic caller resolution", () => {
+  test("resolves relative-import aliases and rejects shadowed lookalikes", async () => {
+    await withRepo(async (root) => {
+      mkdirSync(path.join(root, "src"), { recursive: true });
+      writeFileSync(
+        path.join(root, "src", "billing.ts"),
+        [
+          "export function calculateTotal(): number { return 42; }",
+          "export class InvoiceService { calculateTotal(): number { return 7; } }",
+          "",
+        ].join("\n"),
+      );
+      writeFileSync(
+        path.join(root, "src", "checkout.ts"),
+        [
+          'import { calculateTotal as total } from "./billing";',
+          "export function checkout(): number { return total(); }",
+          "export function shadowed(): number {",
+          "  const calculateTotal = () => 0;",
+          "  return calculateTotal();",
+          "}",
+          "",
+        ].join("\n"),
+      );
+      writeFileSync(
+        path.join(root, "src", "service.ts"),
+        [
+          'import { InvoiceService } from "./billing";',
+          "export function run(service: InvoiceService): number {",
+          "  return service.calculateTotal();",
+          "}",
+          "",
+        ].join("\n"),
+      );
+
+      const functionCallers = findRepositoryCallers(root, "calculateTotal");
+      const methodCallers = findRepositoryCallers(root, "InvoiceService.calculateTotal");
+
+      expect(functionCallers.matches).toHaveLength(1);
+      expect(functionCallers.matches[0]).toMatchObject({
+        caller: "checkout",
+        path: "src/checkout.ts",
+        line: 2,
+      });
+      expect(methodCallers.matches).toHaveLength(1);
+      expect(methodCallers.matches[0]).toMatchObject({
+        caller: "run",
+        path: "src/service.ts",
+        line: 3,
+      });
+      expect(functionCallers.output).toContain("checker-resolved");
+      expect(functionCallers.output).toContain("[rev ");
     });
   });
 });

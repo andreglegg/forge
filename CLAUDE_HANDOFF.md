@@ -12,7 +12,7 @@ engineering state.
 | Local suite (15 tasks, 3 trials) | **14/15** every trial, 0 false successes | `bench/DECOMPOSE_INSTRUCTION.md` |
 | Greenfield build | works, then over-reports | same |
 | Model scaling | 7B 4.8% / 14B 11.9-14.3% / 30B-MoE 64-67% | `bench/MODEL_SCALING.md` |
-| Tests | **319 pass, 1 skip** | `npm run check` on 2026-08-05 |
+| Tests | **321 pass, 1 skip** | `npm run check` on 2026-08-05 |
 
 ## Measurement discipline (read before running an experiment)
 
@@ -56,25 +56,22 @@ Git-worktree isolation and verified promotion, named model profiles,
 evidence-preserving compaction, promotion risk scanning, and explicit bounded
 headless lifecycle hooks.
 
-The current working slice adds revision-bound TypeScript/JavaScript declaration and syntax-reference intelligence:
+The current working slice adds checker-resolved direct caller intelligence:
 
-- `src/symbols.ts` uses a pinned TypeScript 5.9 compiler API while Forge itself
-  remains compiled with TypeScript 7.
-- `SYMBOL <name>` has text/native parity and reports exact top-level declarations
-  plus named class/interface/enum members with line/column ranges, export status,
-  and the revision of the parsed source.
-- `REFERENCES <name>` has text/native parity and reports exact AST identifier use
-  sites outside declaration positions, excluding comments and strings.
-- Symbol scans share repository visibility rules and are bounded to 10,000
-  supported files, 512 KiB per file, and 100 returned declarations.
-- The parser runtime is lazy-loaded only when `SYMBOL` executes, so ordinary
-  parallel CLI runs do not pay its startup and memory cost.
-- This is syntax indexing, not a language server: semantic aliases, inferred
-  types, overload identity, scope-aware callers, package imports, path aliases,
-  and package exports remain explicitly unsupported.
-- A scripted provider test proves the full tool loop on a 221-file deep project.
-- `npm run check` passes 319 tests with one intentional pty skip. The focused
-  symbol/protocol suite passes 52 tests.
+- `CALLERS <name>` has text/native parity and uses the pinned TypeScript 5.9
+  checker to resolve direct calls and constructor calls.
+- Relative-import aliases resolve to their declarations, while same-named local
+  closures are excluded by lexical symbol identity.
+- Qualified member queries such as `InvoiceService.calculateTotal` resolve class
+  methods separately from top-level functions with the same short name.
+- Results include the enclosing caller, exact line/column range, and source
+  revision, bounded to 10,000 supported files, 512 KiB per file, and 100 results.
+- The parser/checker remains lazy-loaded only for `SYMBOL`, `REFERENCES`, or
+  `CALLERS`, so ordinary runs avoid its startup and memory cost.
+- Dynamic dispatch, reflection, package/path aliases, inferred runtime targets,
+  and untyped calls remain explicitly unsupported.
+- A scripted provider test proves `SYMBOL` followed by `CALLERS` end to end in a
+  222-file project.
 
 ### Historical verification-gate context
 
@@ -86,9 +83,9 @@ failed 1 run in 6. Confirmation prevents that pass from laundering a bad change.
 
 ## Open, in product-plan order
 
-1. **Semantic caller resolution and dependency-backed context selection.** Use
-   exact declarations, syntax references, and bounded dependency evidence to
-   distinguish true callers and automatically select relevant context.
+1. **Dependency-backed automatic context selection.** Use exact declarations,
+   checker-resolved callers, syntax references, and bounded module relationships
+   to select relevant files without relying only on task vocabulary.
 2. **Change-impact analysis and focused verification planning.** Map run-mutated
    paths to packages, inbound dependency closure, and candidate tests while
    preserving the authoritative full completion gate.

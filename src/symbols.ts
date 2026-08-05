@@ -95,6 +95,24 @@ export interface RepositoryReferenceResult {
   readonly truncated: boolean;
 }
 
+export interface RepositoryCaller {
+  readonly target: string;
+  readonly caller: string;
+  readonly path: string;
+  readonly line: number;
+  readonly column: number;
+  readonly endLine: number;
+  readonly endColumn: number;
+  readonly revision: string;
+}
+
+export interface RepositoryCallerResult {
+  readonly query: string;
+  readonly matches: readonly RepositoryCaller[];
+  readonly output: string;
+  readonly truncated: boolean;
+}
+
 function normalizedScope(candidate: string): string | null {
   if (!candidate || candidate.includes("\0")) return null;
   if (/^[A-Za-z]:/.test(candidate) || /^[\\/]{2}[^\\/]+[\\/]/.test(candidate)) return null;
@@ -460,6 +478,186 @@ export function findRepositoryReferences(
     ...(truncated ? ["[reference scan truncated at the configured safety limit]"] : []),
   ].join("\n");
   return { query, matches, output, truncated };
+}
+
+function canonicalSymbol(checker: ts.TypeChecker, symbol: ts.Symbol | undefined): ts.Symbol | null {
+  if (symbol === undefined) return null;
+  return (symbol.flags & ts.SymbolFlags.Alias) !== 0 ? checker.getAliasedSymbol(symbol) : symbol;
+}
+
+function isTopLevelDeclarationIdentifier(node: ts.Identifier): boolean {
+  const parent = node.parent;
+  if (
+    (ts.isFunctionDeclaration(parent) ||
+      ts.isClassDeclaration(parent) ||
+      ts.isInterfaceDeclaration(parent) ||
+      ts.isTypeAliasDeclaration(parent) ||
+      ts.isEnumDeclaration(parent) ||
+      ts.isModuleDeclaration(parent)) &&
+    parent.name === node
+  ) {
+    return ts.isSourceFile(parent.parent);
+  }
+  if (ts.isVariableDeclaration(parent) && parent.name === node) {
+    const list = parent.parent;
+    return (
+      ts.isVariableDeclarationList(list) &&
+      ts.isVariableStatement(list.parent) &&
+      ts.isSourceFile(list.parent.parent)
+    );
+  }
+  return false;
+}
+
+function qualifiedDeclarationName(node: ts.Identifier): string {
+  const parent = node.parent;
+  if (
+    (ts.isMethodDeclaration(parent) ||
+      ts.isMethodSignature(parent) ||
+      ts.isPropertyDeclaration(parent) ||
+      ts.isPropertySignature(parent) ||
+      ts.isGetAccessorDeclaration(parent) ||
+      ts.isSetAccessorDeclaration(parent)) &&
+    parent.name === node
+  ) {
+    const container = parent.parent;
+    if (
+      (ts.isClassDeclaration(container) || ts.isInterfaceDeclaration(container)) &&
+      container.name
+    ) {
+      return `${container.name.text}.${node.text}`;
+    }
+  }
+  return node.text;
+}
+
+function enclosingCaller(node: ts.Node): string {
+  let current: ts.Node | undefined = node.parent;
+  while (current !== undefined) {
+    if (ts.isFunctionDeclaration(current) && current.name) return current.name.text;
+    if (ts.isMethodDeclaration(current) && current.name) {
+      const name = propertyName(current.name, current.getSourceFile()) ?? "<method>";
+      const container = current.parent;
+      return ts.isClassDeclaration(container) && container.name
+        ? `${container.name.text}.${name}`
+        : name;
+    }
+    if (ts.isConstructorDeclaration(current)) {
+      const container = current.parent;
+      return ts.isClassDeclaration(container) && container.name
+        ? `${container.name.text}.constructor`
+        : "constructor";
+    }
+    if (ts.isArrowFunction(current) || ts.isFunctionExpression(current)) {
+      const parent = current.parent;
+      if (ts.isVariableDeclaration(parent) && ts.isIdentifier(parent.name)) return parent.name.text;
+      return "<anonymous>";
+    }
+    current = current.parent;
+  }
+  return "<module>";
+}
+
+export function findRepositoryCallers(
+  root: string,
+  queryInput: string,
+  options: SymbolLookupOptions = {},
+): RepositoryCallerResult {
+  const query = queryInput.trim();
+  if (!query) throw new Error("caller query cannot be empty");
+  const scope = normalizedScope(options.path ?? ".");
+  if (scope === null) throw new Error(`${options.path ?? "."} is outside the repository`);
+  const index = options.index ?? indexRepository(root);
+  const candidates = index.entries.filter(
+    (entry) =>
+      entry.type === "file" && isSupportedSource(entry.path) && insideScope(entry.path, scope),
+  );
+  const selected = candidates
+    .slice(0, DEFAULT_MAX_FILES)
+    .filter((entry) => (entry.bytes ?? 0) <= DEFAULT_MAX_FILE_BYTES);
+  const rootNames = selected.map((entry) => path.join(root, entry.path));
+  const program = ts.createProgram({
+    rootNames,
+    options: {
+      allowJs: true,
+      checkJs: false,
+      noEmit: true,
+      noLib: true,
+      skipLibCheck: true,
+      moduleResolution: ts.ModuleResolutionKind.Node10,
+      target: ts.ScriptTarget.Latest,
+    },
+  });
+  const checker = program.getTypeChecker();
+  const targets = new Set<ts.Symbol>();
+
+  for (const sourceFile of program.getSourceFiles()) {
+    if (!rootNames.includes(sourceFile.fileName)) continue;
+    const visitDeclaration = (node: ts.Node): void => {
+      if (ts.isIdentifier(node) && isDeclarationIdentifier(node)) {
+        const name = qualifiedDeclarationName(node);
+        const selectedDeclaration = query.includes(".")
+          ? name === query
+          : isTopLevelDeclarationIdentifier(node) && node.text === query;
+        if (selectedDeclaration) {
+          const symbol = canonicalSymbol(checker, checker.getSymbolAtLocation(node));
+          if (symbol !== null) targets.add(symbol);
+        }
+      }
+      ts.forEachChild(node, visitDeclaration);
+    };
+    visitDeclaration(sourceFile);
+  }
+
+  const matches: RepositoryCaller[] = [];
+  if (targets.size > 0) {
+    for (const sourceFile of program.getSourceFiles()) {
+      const relative = path.relative(root, sourceFile.fileName).replaceAll("\\", "/");
+      if (!insideScope(relative, scope) || !isSupportedSource(relative)) continue;
+      const revision = revisionOfContent(sourceFile.text);
+      const visitCall = (node: ts.Node): void => {
+        if (ts.isCallExpression(node) || ts.isNewExpression(node)) {
+          const expression = node.expression;
+          const lookup = ts.isPropertyAccessExpression(expression) ? expression.name : expression;
+          const symbol = canonicalSymbol(checker, checker.getSymbolAtLocation(lookup));
+          if (symbol !== null && targets.has(symbol)) {
+            matches.push({
+              target: query,
+              caller: enclosingCaller(node),
+              path: relative,
+              ...declarationLocation(sourceFile, expression),
+              revision,
+            });
+          }
+        }
+        ts.forEachChild(node, visitCall);
+      };
+      visitCall(sourceFile);
+    }
+  }
+
+  matches.sort(
+    (left, right) =>
+      left.path.localeCompare(right.path) || left.line - right.line || left.column - right.column,
+  );
+  const maxResults = Math.max(1, options.maxResults ?? DEFAULT_MAX_RESULTS);
+  const shown = matches.slice(0, maxResults);
+  const truncated =
+    index.truncated || candidates.length > selected.length || matches.length > shown.length;
+  const output = [
+    `Semantic callers for ${query} (${matches.length}):`,
+    ...(shown.length === 0
+      ? ["  (none)"]
+      : shown.map(
+          (match) =>
+            `  ${match.caller} — ${match.path}:${match.line}:${match.column}-${match.endLine}:${match.endColumn} [rev ${match.revision.slice(0, 12)}]`,
+        )),
+    ...(matches.length > shown.length ? [`  … ${matches.length - shown.length} more`] : []),
+    "Analysis: TypeScript checker-resolved direct calls and constructor calls, including relative-import aliases and lexical scope. Dynamic dispatch, reflection, package aliases, and untyped runtime calls are not inferred.",
+    `Scan: ${selected.length}/${candidates.length} supported files.`,
+    ...(truncated ? ["[caller scan truncated at the configured safety limit]"] : []),
+  ].join("\n");
+  return { query, matches: shown, output, truncated };
 }
 
 export function findRepositorySymbols(

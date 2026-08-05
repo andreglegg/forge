@@ -40,6 +40,14 @@ describe("symbol navigation through the CLI", () => {
       "",
     ].join("\n");
     writeFileSync(path.join(targetDirectory, "invoice-service.ts"), source);
+    writeFileSync(
+      path.join(targetDirectory, "checkout.ts"),
+      [
+        'import { InvoiceService as BillingService } from "./invoice-service";',
+        "export function checkout(): BillingService { return new BillingService(); }",
+        "",
+      ].join("\n"),
+    );
 
     const streamRequests: string[] = [];
     const server = createServer((request, response) => {
@@ -65,10 +73,8 @@ describe("symbol navigation through the CLI", () => {
           return;
         }
         streamRequests.push(raw);
-        stream(
-          response,
-          streamRequests.length === 1 ? "SYMBOL InvoiceService\n" : "DONE found it\n",
-        );
+        const scripted = ["SYMBOL InvoiceService\n", "CALLERS InvoiceService\n", "DONE found it\n"];
+        stream(response, scripted[streamRequests.length - 1] ?? "DONE found it\n");
       });
     });
 
@@ -81,7 +87,7 @@ describe("symbol navigation through the CLI", () => {
       const code = await main(
         [
           "plan",
-          "Find the declaration of InvoiceService and report its exact location.",
+          "Find the declaration and direct constructor callers of InvoiceService with exact locations.",
           "--repo",
           root,
           "--url",
@@ -101,14 +107,19 @@ describe("symbol navigation through the CLI", () => {
       expect(code).toBe(0);
       expect(captured.err).toEqual([]);
       expect(result).toMatchObject({ ok: true, mode: "plan", state: { committed: [] } });
-      expect(streamRequests).toHaveLength(2);
-      expect(streamRequests[0]).toContain("Repository index: 221 files");
+      expect(streamRequests).toHaveLength(3);
+      expect(streamRequests[0]).toContain("Repository index: 222 files");
       expect(streamRequests[1]).toContain("Symbol declarations for InvoiceService (1)");
       expect(streamRequests[1]).toContain(
         "class InvoiceService — packages/api/src/billing/invoice-service.ts:1:14-1:28 [exported]",
       );
       expect(streamRequests[1]).toContain(`[rev ${revisionOfContent(source).slice(0, 12)}]`);
       expect(streamRequests[1]).toContain("TypeScript compiler syntax tree");
+      expect(streamRequests[2]).toContain("Semantic callers for InvoiceService (1)");
+      expect(streamRequests[2]).toContain(
+        "checkout — packages/api/src/billing/checkout.ts:2:57-2:71",
+      );
+      expect(streamRequests[2]).toContain("checker-resolved direct calls and constructor calls");
     } finally {
       await new Promise<void>((resolve, reject) =>
         server.close((error) => (error ? reject(error) : resolve())),

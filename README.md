@@ -311,6 +311,8 @@ GREP RequestHandler
 SEARCH exact literal text
 RELATED packages/api/src/server.ts
 SYMBOL RequestHandler
+REFERENCES RequestHandler
+CALLERS RequestHandler
 READ packages/api/src/server.ts:120-220
 ```
 
@@ -318,7 +320,7 @@ READ packages/api/src/server.ts:120-220
 complete bounded index, including paths deeper than three levels and beyond 200
 files. `RELATED` reports the nearest package root, direct relative module
 dependencies, inbound dependents, and related tests for TypeScript/JavaScript
-files. `SYMBOL` uses a pinned TypeScript compiler parser to report exact declarations and named class/interface members with line, column, export status, and source revision. `READ path:start-end` gives an exact line range, while an unrestricted
+files. `SYMBOL` reports exact declarations, `REFERENCES` reports syntax occurrences, and `CALLERS` uses the TypeScript checker to resolve direct calls and constructor calls across relative-import aliases and lexical scopes. Every result carries an exact range and source revision. `READ path:start-end` gives an exact line range, while an unrestricted
 large read is clipped with a continuation instruction. Search skips binary files
 and files above 2 MiB; reads are bounded to 16,000 characters per action. A
 ranged, clipped, or failed read never authorizes a wholesale replacement of an
@@ -326,9 +328,7 @@ existing file; large files must be changed with anchored edits. The index is
 capped at 50,000 entries.
 
 Relationship and symbol scans are bounded to 10,000 supported source files and 512 KiB per
-file. They resolve relative imports, export-from declarations, `require`,
-string-literal dynamic imports, common source extensions, TypeScript `.js`
-specifiers, and directory indexes. Symbol lookup is syntax-only: it does not yet resolve aliases, overload identity, inferred types, local variables, or semantic references. Package imports, path aliases, package exports, and language-server reference semantics remain planned.
+file. Module relationships resolve relative imports, export-from declarations, `require`, string-literal dynamic imports, common source extensions, TypeScript `.js` specifiers, and directory indexes. `CALLERS` resolves direct checker-visible calls and constructor calls, but not dynamic dispatch, reflection, package/path aliases, inferred runtime targets, or untyped calls.
 
 Generated dependency/build/cache directories, common credential files,
 `.docs`, and `.meta` are excluded from ordinary context. Exercise specifications
