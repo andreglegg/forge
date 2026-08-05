@@ -28,8 +28,22 @@ const HooksSchema = z
   })
   .strict();
 
+/**
+ * Where commands run. Absent means the host, which is the historical behaviour
+ * and stays the default: a container backend that turned itself on would break
+ * every project whose toolchain is installed locally rather than in an image.
+ */
+const ExecutionSchema = z
+  .object({
+    runtime: z.enum(["host", "docker", "podman"]).optional(),
+    image: z.string().min(1).optional(),
+    network: z.boolean().optional(),
+  })
+  .strict();
+
 const ProjectConfigSchema = z
   .object({
+    execution: ExecutionSchema.optional(),
     url: z.string().url().optional(),
     model: z.string().min(1).optional(),
     verify: z.array(z.array(z.string()).min(1)).optional(),

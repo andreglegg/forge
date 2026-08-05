@@ -22,7 +22,8 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { type ExecResult, execBounded, resolveCommandInvocation } from "./exec.js";
+import { type ExecutionBackend, hostExecutionBackend } from "./backend.js";
+import { type ExecResult, resolveCommandInvocation } from "./exec.js";
 import { classifyVerificationReport, recoveryDirective } from "./recovery.js";
 
 /**
@@ -82,6 +83,13 @@ export interface VerificationConfig {
 export interface VerifyOptions {
   readonly cwd: string;
   readonly signal?: AbortSignal | undefined;
+  /**
+   * Where the commands run. Defaults to the host, which is what every caller
+   * did before backends existed. A project's suite is arbitrary code that the
+   * model can edit, so this is the one place worth isolating even when the
+   * repository itself is already in a worktree.
+   */
+  readonly backend?: ExecutionBackend | undefined;
 }
 
 export interface VerificationRun {
@@ -246,8 +254,10 @@ async function executeVerificationCommand(
   if (!invocation.ok) {
     return { code: null, output: invocation.output, timedOut: false, seconds: 0 };
   }
-  return await execBounded(invocation.command, {
+  const backend = options.backend ?? hostExecutionBackend;
+  return await backend.run(invocation.command, {
     cwd: invocation.cwd,
+    root: options.cwd,
     timeoutSeconds,
     maxOutputChars: CAPTURE_CHARS,
     signal: options.signal,
