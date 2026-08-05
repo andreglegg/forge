@@ -26,6 +26,13 @@ import {
 import path from "node:path";
 import { createInterface } from "node:readline/promises";
 import {
+  describeBackend,
+  type ExecutionBackend,
+  type ExecutionRuntime,
+  hostExecutionBackend,
+  resolveExecutionBackend,
+} from "./backend.js";
+import {
   fingerprintExecutable,
   fingerprintSuite,
   formatBench,
@@ -44,7 +51,8 @@ import {
   loadPolyglotReport,
 } from "./compare.js";
 import { type ContextItem, type ContextReceipt, compile, scoreFiles } from "./context.js";
-import { execBounded, resolveCommandInvocation } from "./exec.js";
+import { contractHeader, EVENT_CONTRACT_VERSION } from "./contract.js";
+import { resolveCommandInvocation } from "./exec.js";
 import { formatHookFailure, type HookReport, runProjectHooks } from "./hooks.js";
 import { projectInstructionItems } from "./instructions.js";
 import {
@@ -108,6 +116,7 @@ import {
   repositoryFiles,
   searchRepository,
 } from "./repository.js";
+import { RetryBudget, stopNotice } from "./retry.js";
 import { decidePromotionRisk, type PatchRisk, scanPatchRisks } from "./risk.js";
 import {
   type ActionResult,
@@ -152,6 +161,7 @@ const USAGE = [
   "  forge config             print resolved configuration",
   "  forge profiles           list named model profiles",
   "  forge replay [path]      score the decoder on recorded turns — offline, free",
+  "  forge contract           the event-stream contract clients read",
   "  forge sessions           what has been run here",
   "  forge show <id>          replay a recorded session",
   "  forge undo [id]          put back what a session changed (default: the last)",
@@ -185,6 +195,9 @@ const USAGE = [
   "  --read-only              deny edits and command execution",
   "  --plan                   plan mode alias",
   "  --no-verify              skip the verification gate on completion",
+  "  --sandbox <runtime>      run commands in host, docker, or podman",
+  "  --image <image>          container image for a sandboxed runtime",
+  "  --sandbox-network        allow network from the sandbox (off by default)",
   "  --native                 use the provider's tool-calling instead of the text protocol",
   "  --json                   one final machine-readable document",
   "  --stream-json            JSONL durable events plus one final result",
@@ -539,7 +552,11 @@ function taskPacketItems(workspace: Workspace, task: string): ContextItem[] {
 }
 
 /** Executes the non-edit tools. Reads are unrestricted inside the workspace. */
-function makeTools(workspace: Workspace, signal?: AbortSignal) {
+function makeTools(
+  workspace: Workspace,
+  signal?: AbortSignal,
+  backend: ExecutionBackend = hostExecutionBackend,
+) {
   return {
     // Keeps the bytes every edit replaced, so `forge undo` has something to
     // restore from. Content-addressed, so an unchanged file body costs nothing
@@ -649,8 +666,9 @@ function makeTools(workspace: Workspace, signal?: AbortSignal) {
           }
           const invocation = resolveCommandInvocation(command as string[], workspace.root);
           if (!invocation.ok) return { ok: false, output: invocation.output };
-          const result = await execBounded(invocation.command, {
+          const result = await backend.run(invocation.command, {
             cwd: invocation.cwd,
+            root: workspace.root,
             signal,
           });
           const prefix = invocation.notice === null ? "" : `${invocation.notice}\n`;
@@ -674,8 +692,42 @@ function makeTools(workspace: Workspace, signal?: AbortSignal) {
   };
 }
 
-function makeRunEffects(workspace: Workspace, signal: AbortSignal, mode: PermissionMode) {
-  const tools = makeTools(workspace, signal);
+/**
+ * Where this run's commands execute.
+ *
+ * Flags win over `forge.json` so an operator can contain a run without editing
+ * a file the model can also edit. Resolution can throw -- a container runtime
+ * named without an image -- and the caller reports that rather than silently
+ * falling back to the host, because a silent fallback would run unsandboxed
+ * exactly when someone asked for a sandbox.
+ */
+function executionBackendFor(
+  project: ProjectConfig,
+  options: Readonly<Record<string, string | boolean>>,
+): ExecutionBackend {
+  const requested = options["sandbox"];
+  const runtime =
+    typeof requested === "string" && requested !== ""
+      ? (requested as ExecutionRuntime)
+      : project.execution?.runtime;
+  if (runtime !== undefined && !["host", "docker", "podman"].includes(runtime)) {
+    throw new Error(`unknown execution runtime: ${runtime}; use host, docker, or podman`);
+  }
+  const image = typeof options["image"] === "string" ? options["image"] : project.execution?.image;
+  return resolveExecutionBackend({
+    runtime,
+    image,
+    network: options["sandbox-network"] === true || project.execution?.network === true,
+  });
+}
+
+function makeRunEffects(
+  workspace: Workspace,
+  signal: AbortSignal,
+  mode: PermissionMode,
+  backend: ExecutionBackend = hostExecutionBackend,
+) {
+  const tools = makeTools(workspace, signal, backend);
   if (mode === "workspace") return { workspace, ...tools };
   const refusal = modeRefusal(mode);
   return {
@@ -818,6 +870,12 @@ export async function main(argv: readonly string[], io: IO = consoleIO): Promise
   }
   if (options["help"] === true || command === "help") {
     io.out(USAGE);
+    return 0;
+  }
+  // Readable without starting a run, so a client can negotiate before it
+  // launches anything -- and without a repository, so it works from anywhere.
+  if (command === "contract") {
+    io.out(JSON.stringify(contractHeader().contract, null, 2));
     return 0;
   }
 
@@ -1050,6 +1108,18 @@ export async function main(argv: readonly string[], io: IO = consoleIO): Promise
     command === "continue" ||
     command === "resume";
   if (codingCommand) {
+    // First line, before anything that can fail. A client that reads a preflight
+    // error as its first record still learns which contract that error is in.
+    if (options["stream-json"] === true) io.out(JSON.stringify(contractHeader()));
+    // Checked before the provider is contacted: a sandbox misconfiguration is
+    // local, certain, and cheap to report, and there is no reason to spend a
+    // network round trip discovering it.
+    try {
+      executionBackendFor(project, options);
+    } catch (error) {
+      io.err(error instanceof Error ? error.message : String(error));
+      return 2;
+    }
     const provider = await probeProvider(config, { completion: true });
     if (!provider.ok) {
       const message = `Provider preflight failed at ${config.baseUrl}: ${provider.error ?? "unhealthy endpoint"}`;
@@ -1556,6 +1626,7 @@ export async function main(argv: readonly string[], io: IO = consoleIO): Promise
       options["batch-actions"] === true,
       mode,
       rest[0] === undefined ? {} : { id: rest[0] },
+      options,
     );
   }
   if (command !== null) {
@@ -1574,6 +1645,7 @@ export async function main(argv: readonly string[], io: IO = consoleIO): Promise
     options["batch-actions"] === true,
     mode,
     null,
+    options,
   );
 }
 
@@ -1586,10 +1658,33 @@ export async function main(argv: readonly string[], io: IO = consoleIO): Promise
  * is the single most dangerous behaviour this package has observed -- so the
  * only trustworthy completion is one something else agreed with.
  *
- * Returns null when the run may finish, or the text to feed back when it may
- * not. An unconfigured project cannot be gated, and says so rather than
- * printing "verified" for the absence of evidence.
+ * Returns a null objection when the run may finish, or the text to feed back
+ * when it may not. An unconfigured project cannot be gated, and says so rather
+ * than printing "verified" for the absence of evidence.
+ *
+ * The report travels with the objection so the caller can budget its retries
+ * against what actually failed. It is null when no verification ran -- a hook
+ * refusal or the read-back substitute -- and those paths stay unbudgeted.
  */
+/**
+ * The objection to a completion that changed nothing.
+ *
+ * Verification cannot produce this one. A suite that was green before the run
+ * is still green after a run that did nothing, so `passed: true` says only that
+ * the repository is not broken -- never that the task was done. Observed live:
+ * a model failed every edit it attempted, wrote "I am unable to proceed" as its
+ * final message, and the run exited 0 because `npm test` passed.
+ */
+const NOTHING_CHANGED =
+  "You reported the task as complete, but this run has not committed a single change.\n" +
+  "Verification only proves the existing suite still passes; it is not evidence that the work happened.\n" +
+  "Either make the change now, or state plainly that you cannot and why.";
+
+interface GateOutcome {
+  readonly objection: string | null;
+  readonly report: VerificationReport | null;
+}
+
 async function gate(
   run: Run,
   workspace: Workspace,
@@ -1604,7 +1699,8 @@ async function gate(
   hooksEnabled = false,
   project: ProjectConfig = {},
   sessionId = "",
-): Promise<string | null> {
+  backend: ExecutionBackend = hostExecutionBackend,
+): Promise<GateOutcome> {
   if (hooksEnabled) {
     const before = await runProjectHooks(project.hooks, {
       repository: workspace.root,
@@ -1613,7 +1709,7 @@ async function gate(
       signal,
     });
     hookReports.push(before);
-    if (!before.ok) return formatHookFailure(before);
+    if (!before.ok) return { objection: formatHookFailure(before), report: null };
   }
   if (commands.length === 0) {
     // No test command exists, so there is nothing to outrank the claim with --
@@ -1638,9 +1734,9 @@ async function gate(
         signal,
       });
       hookReports.push(after);
-      if (!after.ok) return formatHookFailure(after);
+      if (!after.ok) return { objection: formatHookFailure(after), report: null };
     }
-    return objection;
+    return { objection, report: null };
   }
   // Announced through the run's own event stream rather than printed here.
   // Printing directly raced the event subscriber and put this line above the
@@ -1653,7 +1749,7 @@ async function gate(
   // extra suite run on the finish that was about to be accepted anyway.
   const report = await verify(
     { commands, confirmations: VERIFY_CONFIRMATIONS },
-    { cwd: workspace.root, signal },
+    { cwd: workspace.root, signal, backend },
   );
   run.verified(report.passed);
   if (hooksEnabled) {
@@ -1665,13 +1761,17 @@ async function gate(
       signal,
     });
     hookReports.push(after);
-    if (!after.ok) return formatHookFailure(after);
+    // A hook refusal is not a verification failure, so it is not budgeted as
+    // one -- and the report it would carry may be a passing one.
+    if (!after.ok) return { objection: formatHookFailure(after), report: null };
   }
-  return report.passed ? null : formatForModel(report);
+  return { objection: report.passed ? null : formatForModel(report), report };
 }
 
 interface HeadlessResultDocument {
   readonly ok: boolean;
+  /** Event-contract version this document and its stream conform to. */
+  readonly contract?: string;
   readonly session: string;
   readonly mode: PermissionMode;
   readonly usage: Readonly<Record<string, number>>;
@@ -1799,9 +1899,22 @@ async function headless(
     io.err("forge run needs a task description.");
     return 2;
   }
-  const run = new Run(makeRunEffects(workspace, controller.signal, mode), options["yes"] === true);
+  let backend: ExecutionBackend;
+  try {
+    backend = executionBackendFor(project, options);
+  } catch (error) {
+    io.err(error instanceof Error ? error.message : String(error));
+    return 2;
+  }
+  const run = new Run(
+    makeRunEffects(workspace, controller.signal, mode, backend),
+    options["yes"] === true,
+  );
   const asJson = options["json"] === true;
   const streamJson = options["stream-json"] === true;
+  if (backend.settings !== null && !asJson && !streamJson) {
+    io.out(`  ⋮ commands run in ${describeBackend(backend)}`);
+  }
   const sessions = new SessionStore(workspace.root);
   const sessionId = newSessionId();
   const tracePath = traceFileFor(workspace.root, sessionId);
@@ -1853,6 +1966,8 @@ async function headless(
     }
   }
   const progress = new ProgressWatch();
+  const retries = new RetryBudget();
+  let unchangedCompletions = 0;
   const commands =
     options["no-verify"] === true ? [] : (project.verify ?? detectCommands(workspace.root));
   const usages: TurnUsage[] = [];
@@ -1881,7 +1996,23 @@ async function headless(
       // rediscovering that; the reason is already in the results above.
       if (result.stalled) break;
       if (result.finished) {
-        const objection =
+        // Checked before the gate runs, not after: a suite that was green
+        // before the run is still green after a run that did nothing, so
+        // verification here would cost a full suite and settle nothing.
+        if (run.snapshot().committed.length === 0 && commands.length > 0) {
+          if (unchangedCompletions === 0) {
+            unchangedCompletions += 1;
+            run.reopen("completion reported with nothing committed");
+            messages.push({ role: "assistant", content: result.text });
+            messages.push({ role: "user", content: NOTHING_CHANGED });
+            continue;
+          }
+          // Told once, and it repeated the claim. Spending the remaining turns
+          // would only collect the same answer.
+          run.fail("run finished with nothing committed; the reported completion is not evidence");
+          break;
+        }
+        const outcome: GateOutcome =
           mode === "workspace"
             ? await gate(
                 run,
@@ -1897,17 +2028,27 @@ async function headless(
                 hooksEnabled,
                 project,
                 sessionId,
+                backend,
               )
-            : null;
-        if (objection === null) {
+            : { objection: null, report: null };
+        if (outcome.objection === null) {
           code = 0;
+          break;
+        }
+        // Repairing the same failure forever costs the same turns as repairing
+        // it once and spends them learning nothing. The budget ends the run on
+        // its own terms instead; `code` stays 1, so a stopped run is a failed
+        // one and never a laundered success.
+        const decision = outcome.report === null ? null : retries.record(outcome.report);
+        if (decision?.action === "stop") {
+          run.fail(stopNotice(decision));
           break;
         }
         // The model said done and the project disagreed. Its claim is
         // withdrawn and the failure goes back as the next observation.
         run.reopen();
         messages.push({ role: "assistant", content: result.text });
-        messages.push({ role: "user", content: objection });
+        messages.push({ role: "user", content: outcome.objection });
         continue;
       }
       progress.observe(result.results);
@@ -1928,7 +2069,7 @@ async function headless(
               commands: focusedPlan.commands.map((entry) => entry.command),
               timeoutSeconds: 120,
             },
-            { cwd: workspace.root, signal: controller.signal },
+            { cwd: workspace.root, signal: controller.signal, backend },
           );
           focusedVerification.push({ plan: focusedPlan, report });
           impactNotice += report.passed
@@ -1969,6 +2110,9 @@ async function headless(
       : (await import("./impact.js")).planChangeImpact(workspace.root, committedPaths);
   const resultDocument: HeadlessResultDocument = {
     ok: code === 0,
+    // Same version the stream announces, so a client that only ever sees the
+    // final document is not the one consumer that has to guess.
+    contract: EVENT_CONTRACT_VERSION,
     session: sessionId,
     mode,
     usage: { ...usage, actions },
@@ -2044,7 +2188,16 @@ async function interactive(
   batchActions: boolean,
   mode: PermissionMode,
   initialResume: { readonly id?: string } | null,
+  options: Readonly<Record<string, string | boolean>> = {},
 ): Promise<number> {
+  let backend: ExecutionBackend;
+  try {
+    backend = executionBackendFor(project, options);
+  } catch (error) {
+    io.err(error instanceof Error ? error.message : String(error));
+    return 2;
+  }
+  if (backend.settings !== null) io.out(`  ⋮ commands run in ${describeBackend(backend)}`);
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   // stdin can end at any moment -- Ctrl-D, a pipe running dry, a closed
   // terminal -- including while an approval is pending. `rl.question` throws
@@ -2196,7 +2349,11 @@ async function interactive(
       const context = await taskContext(workspace, input, contextBudget, taskPacket);
       lastReceipt = context.receipt;
       transcript.push({ role: "user", content: `${context.text}\n\n${input}` });
-      const run = new Run(makeRunEffects(workspace, controller.signal, mode), false, policy);
+      const run = new Run(
+        makeRunEffects(workspace, controller.signal, mode, backend),
+        false,
+        policy,
+      );
       const drained = (async () => {
         for await (const event of run.events()) {
           sessions.appendTo(sessionId, event);
@@ -2230,6 +2387,10 @@ async function interactive(
       const usages: TurnUsage[] = [];
       const progress = new ProgressWatch();
       const verificationCadence = new VerificationCadence();
+      // Per input, not per session: each request gets its own budget, and a
+      // repair that failed on the last task does not shorten the next one.
+      const retries = new RetryBudget();
+      let unchangedCompletions = 0;
       try {
         for (let turn = 0; turn < 12; turn += 1) {
           const meter = new TurnMeter(() => Date.now());
@@ -2254,7 +2415,19 @@ async function interactive(
           transcript.push({ role: "assistant", content: result.text });
           if (result.stalled) break;
           if (result.finished) {
-            const objection =
+            if (run.snapshot().committed.length === 0 && commands.length > 0) {
+              if (unchangedCompletions === 0) {
+                unchangedCompletions += 1;
+                run.reopen("completion reported with nothing committed");
+                transcript.push({ role: "user", content: NOTHING_CHANGED });
+                continue;
+              }
+              const notice = "Nothing was committed, so the reported completion is not evidence.";
+              run.fail(notice);
+              io.out(`  ⋮ ${notice}`);
+              break;
+            }
+            const outcome: GateOutcome =
               mode === "workspace"
                 ? await gate(
                     run,
@@ -2266,11 +2439,25 @@ async function interactive(
                     io,
                     false,
                     native,
+                    [],
+                    false,
+                    project,
+                    "",
+                    backend,
                   )
-                : null;
-            if (objection === null) break;
+                : { objection: null, report: null };
+            if (outcome.objection === null) break;
+            const decision = outcome.report === null ? null : retries.record(outcome.report);
+            if (decision?.action === "stop") {
+              // The user is present, so the run stops here and hands the
+              // decision back to them rather than spending the rest of the turns.
+              const notice = stopNotice(decision);
+              run.fail(notice);
+              io.out(`  ⋮ ${notice.split("\n").join("\n  ⋮ ")}`);
+              break;
+            }
             run.reopen();
-            transcript.push({ role: "user", content: objection });
+            transcript.push({ role: "user", content: outcome.objection });
             continue;
           }
           progress.observe(result.results);
@@ -2291,7 +2478,7 @@ async function interactive(
                   commands: focusedPlan.commands.map((entry) => entry.command),
                   timeoutSeconds: 120,
                 },
-                { cwd: workspace.root, signal: controller.signal },
+                { cwd: workspace.root, signal: controller.signal, backend },
               );
               impactNotice += report.passed
                 ? `\n\nFocused verification passed (${report.ran.length} command${report.ran.length === 1 ? "" : "s"}). The authoritative completion gate is still required.`
