@@ -114,3 +114,19 @@ describe("what a finished run failed to deliver", () => {
     expect(missingDeliverables(root, "Make the failing test pass.")).toEqual([]);
   });
 });
+
+describe("paths that are produced rather than requested", () => {
+  test("ignores build-artifact trees named by embedded tool output", () => {
+    // Measured: the one false objection in 300 recorded benchmark retry
+    // prompts, which embed raw compiler output alongside the request.
+    expect(namedPaths("error in CMakeFiles/complex-numbers.dir/complex_numbers.cpp")).toEqual([]);
+    expect(namedPaths("see target/debug/build/foo.rs and node_modules/x/index.js")).toEqual([]);
+    expect(namedPaths("stale dist/main.js")).toEqual([]);
+  });
+
+  test("still sees an ordinary source path in the same sentence", () => {
+    expect(namedPaths("CMakeFiles/a.dir/x.cpp failed; fix src/complex_numbers.cpp")).toEqual([
+      "src/complex_numbers.cpp",
+    ]);
+  });
+});

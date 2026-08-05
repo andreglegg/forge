@@ -39,6 +39,21 @@ const PATH_TOKEN =
 const URL_LIKE = /\b[a-z][a-z0-9+.-]*:\/\/\S+/gi;
 
 /**
+ * Directories whose contents are produced, never requested.
+ *
+ * A task string is not always only the user's words: a retry prompt embeds the
+ * failing build or test output, and a compiler names paths inside its own
+ * artifact tree. Measured against 300 recorded benchmark retry prompts, exactly
+ * one would have produced a false objection, for
+ * `CMakeFiles/complex-numbers.dir/complex_numbers.cpp` -- a file nobody asked
+ * for and whose absence means nothing. A false objection costs a turn and
+ * teaches the model that the harness is unreliable, so the cheap exclusion is
+ * worth more than the case it gives up.
+ */
+const GENERATED_DIRECTORY =
+  /(?:^|\/)(?:CMakeFiles|node_modules|__pycache__|\.git|\.forge|target|build|dist|obj|out|coverage|\.gradle|\.venv|venv)(?:\/|$)/i;
+
+/**
  * Repository-relative paths the task text names, in the order written.
  *
  * Exported for its own tests: the parsing is the part most likely to be wrong,
@@ -53,6 +68,7 @@ export function namedPaths(task: string): string[] {
     // Absolute and traversing paths are dropped here rather than resolved:
     // they are never a deliverable this run is responsible for.
     if (candidate.startsWith("/") || candidate.split("/").includes("..")) continue;
+    if (GENERATED_DIRECTORY.test(candidate)) continue;
     if (!found.includes(candidate)) found.push(candidate);
   }
   return found;
