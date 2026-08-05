@@ -12,8 +12,19 @@ engineering state.
 | Local suite (15 tasks, 3 trials) | **14/15** every trial, 0 false successes | `bench/DECOMPOSE_INSTRUCTION.md` |
 | Greenfield build | works, then over-reports | same |
 | Model scaling | 7B 4.8% / 14B 11.9-14.3% / 30B-MoE 64-67% | `bench/MODEL_SCALING.md` |
-| Tests | **394 pass, 3 skip** | `npm run check` on 2026-08-05 |
+| Tests | **419 pass, 3 skip** | `npm run check` on 2026-08-05 |
+| This session's changes, paired 42 | **27/42 → 28/42, McNemar p=1.000 — no measurable difference** | `bench/PAIRED_42_SESSION_CHANGES.md` |
 | Dogfood build, 10 sessions, 14B | 6 harness defects found and fixed, incl. a false success | `bench/DOGFOOD_LEDGER.md` |
+
+**A pass-rate screen cannot measure a completion-honesty change.** The session
+that added the no-change rule, named-deliverable check, and retry budgets
+measured them paired on the 42: p=1.000, and the rules fired on 1 of 42 cases
+between them. That is structural, not bad luck -- every Polyglot case starts
+with a failing test, so "committed nothing and the suite is still green" is
+unreachable, and the prompts name files by absolute path, which the deliverable
+check excludes by construction. Those changes claim no score gain. Measuring
+that class of change needs a suite whose cases can be satisfied by doing
+nothing, which does not exist yet.
 
 ## Measurement discipline (read before running an experiment)
 
