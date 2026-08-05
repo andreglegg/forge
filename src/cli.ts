@@ -99,7 +99,14 @@ import {
   streamCompletion,
 } from "./provider.js";
 import { relatedRepository, resolveRelativeModuleDependencies } from "./relationships.js";
-import { banner, renderHeadless, renderInteractive, useColor, useTruecolor } from "./render.js";
+import {
+  approvalChoice,
+  banner,
+  renderHeadless,
+  renderInteractive,
+  useColor,
+  useTruecolor,
+} from "./render.js";
 import {
   formatReport,
   loadTraces,
@@ -119,14 +126,7 @@ import {
 } from "./repository.js";
 import { RetryBudget, stopNotice } from "./retry.js";
 import { decidePromotionRisk, type PatchRisk, scanPatchRisks } from "./risk.js";
-import {
-  type ActionResult,
-  ApprovalPolicy,
-  type Decision,
-  Run,
-  type RunEvent,
-  replay,
-} from "./runtime.js";
+import { type ActionResult, ApprovalPolicy, Run, type RunEvent, replay } from "./runtime.js";
 import { newSessionId, SessionStore } from "./session.js";
 import { summarize, TurnMeter, type TurnUsage } from "./usage.js";
 import { detectCommands, formatForModel, type VerificationReport, verify } from "./verify.js";
@@ -2389,14 +2389,7 @@ async function interactive(
               run.send({ type: "cancel" });
               continue;
             }
-            const choice = reply.trim().toLowerCase();
-            const decision: Decision =
-              choice === "" || choice === "a" || choice === "y"
-                ? "once"
-                : choice === "always"
-                  ? "always"
-                  : "deny";
-            run.send({ type: "approve", id: event.id, decision });
+            run.send({ type: "approve", id: event.id, decision: approvalChoice(reply) });
           }
         }
       })();

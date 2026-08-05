@@ -11,7 +11,7 @@
  */
 
 import { LOGO_COLUMNS, LOGO_TRUECOLOR } from "./logo.js";
-import type { RunEvent } from "./runtime.js";
+import type { Decision, RunEvent } from "./runtime.js";
 import type { Hunk } from "./workspace.js";
 
 /**
@@ -43,6 +43,36 @@ const MARK = [
 ];
 
 const MARK_WIDTH = Math.max(...MARK.map((line) => [...line].length));
+
+/**
+ * The options offered at an approval prompt, spelled once.
+ *
+ * Case is meaningful: `[a]pply` and `[A]lways` are different keys, and the
+ * prompt is the only place they are written. `approvalChoice` sits directly
+ * below because the two must agree -- they did not, once.
+ */
+export const APPROVAL_PROMPT = "    [a]pply  [s]kip  [A]lways";
+
+/**
+ * Turn a typed reply into a decision.
+ *
+ * The reply used to be lowercased before comparison, which folded `A` onto `a`
+ * and made the prompt's own "always" key approve exactly once. Case is checked
+ * before folding now, and the spelled-out word is accepted in any case because
+ * it was the only thing that used to work and someone will still be typing it.
+ *
+ * Anything unrecognised denies. A typo must never approve a mutation.
+ */
+export function approvalChoice(reply: string): Decision {
+  const raw = reply.trim();
+  if (raw === "A" || raw.toLowerCase() === "always") return "always";
+  const folded = raw.toLowerCase();
+  // The spelled-out words are accepted too. The prompt writes "apply" and
+  // "skip" on screen, and typing what is written must not mean the opposite of
+  // what it says -- which, for "apply", it did: it fell through to deny.
+  if (["", "a", "y", "apply", "yes"].includes(folded)) return "once";
+  return "deny";
+}
 
 export function banner(
   options: {
@@ -122,7 +152,7 @@ export function renderInteractive(event: RunEvent, options: RenderOptions = {}):
       if (event.preview !== null) {
         lines.push(...diffFrame(event.preview.path, event.preview.hunks, width, diffLimit));
       }
-      lines.push("    [a]pply  [s]kip  [A]lways  ");
+      lines.push(APPROVAL_PROMPT);
       return lines.join("\n");
     }
     case "action.started":
