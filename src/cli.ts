@@ -592,15 +592,18 @@ function makeTools(workspace: Workspace, signal?: AbortSignal) {
             output: relatedRepository(workspace.root, String(args["path"] ?? "")).output,
           };
         }
-        if (proposal.tool === "symbol") {
-          // Load the parser only for symbol work. Ordinary runs should not pay
+        if (proposal.tool === "symbol" || proposal.tool === "references") {
+          // Load the parser only for identifier work. Ordinary runs should not pay
           // the compiler API's startup and memory cost, especially in parallel CI.
-          const { findRepositorySymbols } = await import("./symbols.js");
+          const { findRepositoryReferences, findRepositorySymbols } = await import("./symbols.js");
+          const query = String(args["query"] ?? "");
+          const symbolOptions = { path: String(args["path"] ?? ".") };
           return {
             ok: true,
-            output: findRepositorySymbols(workspace.root, String(args["query"] ?? ""), {
-              path: String(args["path"] ?? "."),
-            }).output,
+            output:
+              proposal.tool === "symbol"
+                ? findRepositorySymbols(workspace.root, query, symbolOptions).output
+                : findRepositoryReferences(workspace.root, query, symbolOptions).output,
           };
         }
         if (proposal.tool === "run") {

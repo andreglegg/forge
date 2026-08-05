@@ -8,7 +8,9 @@ import { renderProposal } from "../src/protocol.js";
 import { indexRepository } from "../src/repository.js";
 import {
   buildRepositorySymbols,
+  extractSourceReferences,
   extractSourceSymbols,
+  findRepositoryReferences,
   findRepositorySymbols,
 } from "../src/symbols.js";
 import { revisionOfContent } from "../src/workspace.js";
@@ -45,6 +47,15 @@ describe("symbol protocol", () => {
     const proposal = fromText.proposals[0];
     expect(proposal).toBeDefined();
     if (proposal !== undefined) expect(renderProposal(proposal)).toBe("SYMBOL RequestHandler");
+  });
+
+  test("normalizes REFERENCES identically in text and native codecs", () => {
+    const fromText = decodeText("REFERENCES RequestHandler\n");
+    const fromNative = decodeNative("references", { query: "RequestHandler", path: "." });
+    expect(fromText.proposals).toEqual(fromNative.proposals);
+    const proposal = fromText.proposals[0];
+    expect(proposal).toBeDefined();
+    if (proposal !== undefined) expect(renderProposal(proposal)).toBe("REFERENCES RequestHandler");
   });
 });
 
@@ -128,6 +139,32 @@ describe("TypeScript and JavaScript declaration extraction", () => {
     expect(names).toContain("makeService");
     expect(names).not.toContain("FakeComment");
     expect(names).not.toContain("FakeString");
+  });
+});
+
+describe("syntax reference extraction", () => {
+  test("finds identifier references while excluding declarations, comments, and strings", async () => {
+    const source = [
+      "export class InvoiceService {}",
+      "const text = 'InvoiceService';",
+      "// InvoiceService",
+      "export function create(service: InvoiceService) {",
+      "  return new InvoiceService();",
+      "}",
+      "",
+    ].join("\n");
+    const extracted = extractSourceReferences("src/use.ts", source, "InvoiceService");
+    expect(extracted.map((entry) => entry.line)).toEqual([4, 5]);
+    expect(extracted.every((entry) => entry.revision === revisionOfContent(source))).toBe(true);
+
+    await withRepo(async (root) => {
+      mkdirSync(path.join(root, "src"), { recursive: true });
+      writeFileSync(path.join(root, "src", "use.ts"), source);
+      const result = findRepositoryReferences(root, "InvoiceService", { path: "src" });
+      expect(result.matches).toHaveLength(2);
+      expect(result.output).toContain("src/use.ts:4:");
+      expect(result.output).toContain("syntax-only");
+    });
   });
 });
 

@@ -22,7 +22,7 @@ Goal: give small models enough deterministic repository understanding to make co
 
 1. Git-ignore-aware repository catalog and bounded deep navigation. **Shipped.**
 2. Relative module dependency graph with inbound dependents, outbound dependencies, package ownership, and related tests. **Shipped.**
-3. Revision-bound TypeScript/JavaScript declaration index. **Shipped.** Semantic references/callers, then Python and Go adapters, remain planned.
+3. Revision-bound TypeScript/JavaScript declaration and syntax-reference index. **Shipped.** Semantic alias/caller resolution, then Python and Go adapters, remain planned.
 4. Change-impact analysis that maps modified files to affected packages and candidate tests.
 5. Budgeted semantic context assembly using dependency, symbol, failure, and recent-change evidence.
 6. Read-only investigation workers that return evidence rather than mutations.
@@ -74,9 +74,10 @@ Exit: Forge can answer “what depends on this file, what does it depend on, and
 
 - Add deterministic TypeScript/JavaScript declaration extraction. **Shipped.**
 - Expose `SYMBOL <name>` with exact source locations, export status, and revision binding. **Shipped.**
-- Add semantic references/callers and combine them with dependency evidence. **Next.**
+- Expose bounded `REFERENCES <name>` syntax references with exact revision-bound locations. **Shipped.**
+- Add semantic alias/caller resolution and combine it with dependency-backed context selection. **Next.**
 
-Partial exit reached: Forge can locate exact declarations even when filenames do not contain the task vocabulary. Full exit requires reference/caller lookup.
+Partial exit reached: Forge can locate exact declarations and identifier use sites even when filenames do not contain the task vocabulary. Full exit requires semantic caller resolution and automatic context selection.
 
 ### Milestone 3 — change-aware verification
 
@@ -126,11 +127,12 @@ Each pass must inspect the latest repository state, preserve unrelated work, imp
 
 1. Dependency relationships and `RELATED`. **Completed.**
 2. TypeScript/JavaScript symbol declarations and exact locations. **Completed.**
-3. Reference lookup and dependency-backed context selection. **Next.**
-4. Change-impact model and focused verification planning.
-5. Failure classification and one bounded retry strategy.
-6. Execution-backend interface around existing host/worktree behavior.
-7. Versioned server/event contract foundation.
+3. Syntax reference lookup. **Completed.**
+4. Semantic caller resolution and dependency-backed context selection. **Next.**
+5. Change-impact model and focused verification planning.
+6. Failure classification and one bounded retry strategy.
+7. Execution-backend interface around existing host/worktree behavior.
+8. Versioned server/event contract foundation.
 
 ## 1.0 product exit criteria
 

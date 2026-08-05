@@ -231,7 +231,7 @@ export class TextCodec implements Codec {
             ? { pattern: rest }
             : name === "glob"
               ? { pattern: rest, path: "." }
-              : name === "search" || name === "symbol"
+              : name === "search" || name === "symbol" || name === "references"
                 ? { query: rest, path: "." }
                 : name === "list"
                   ? { path: rest || "." }

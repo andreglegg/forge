@@ -50,6 +50,16 @@ export interface SourceSymbolExtraction {
   readonly parseDiagnostics: number;
 }
 
+export interface RepositorySymbolReference {
+  readonly name: string;
+  readonly path: string;
+  readonly line: number;
+  readonly column: number;
+  readonly endLine: number;
+  readonly endColumn: number;
+  readonly revision: string;
+}
+
 export interface RepositorySymbolIndex {
   readonly declarations: readonly RepositorySymbolDeclaration[];
   readonly scannedFiles: number;
@@ -74,6 +84,13 @@ export interface SymbolLookupOptions {
 export interface RepositorySymbolResult {
   readonly query: string;
   readonly matches: readonly RepositorySymbolDeclaration[];
+  readonly output: string;
+  readonly truncated: boolean;
+}
+
+export interface RepositoryReferenceResult {
+  readonly query: string;
+  readonly matches: readonly RepositorySymbolReference[];
   readonly output: string;
   readonly truncated: boolean;
 }
@@ -327,6 +344,122 @@ export function buildRepositorySymbols(
 
 function insideScope(relative: string, scope: string): boolean {
   return scope === "." || relative === scope || relative.startsWith(`${scope}/`);
+}
+
+function isDeclarationIdentifier(node: ts.Identifier): boolean {
+  const parent = node.parent;
+  return (
+    ((ts.isFunctionDeclaration(parent) ||
+      ts.isClassDeclaration(parent) ||
+      ts.isInterfaceDeclaration(parent) ||
+      ts.isTypeAliasDeclaration(parent) ||
+      ts.isEnumDeclaration(parent) ||
+      ts.isModuleDeclaration(parent) ||
+      ts.isMethodDeclaration(parent) ||
+      ts.isMethodSignature(parent) ||
+      ts.isPropertyDeclaration(parent) ||
+      ts.isPropertySignature(parent) ||
+      ts.isGetAccessorDeclaration(parent) ||
+      ts.isSetAccessorDeclaration(parent) ||
+      ts.isEnumMember(parent) ||
+      ts.isVariableDeclaration(parent) ||
+      ts.isParameter(parent) ||
+      ts.isBindingElement(parent)) &&
+      parent.name === node) ||
+    (ts.isImportSpecifier(parent) && parent.name === node) ||
+    (ts.isImportClause(parent) && parent.name === node) ||
+    (ts.isNamespaceImport(parent) && parent.name === node) ||
+    (ts.isTypeParameterDeclaration(parent) && parent.name === node)
+  );
+}
+
+export function extractSourceReferences(
+  relative: string,
+  source: string,
+  queryInput: string,
+): readonly RepositorySymbolReference[] {
+  const query = queryInput.trim().split(".").at(-1) ?? "";
+  if (!query) return [];
+  const sourceFile = ts.createSourceFile(
+    relative,
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    scriptKind(relative),
+  );
+  const revision = revisionOfContent(source);
+  const matches: RepositorySymbolReference[] = [];
+  const visit = (node: ts.Node): void => {
+    if (ts.isIdentifier(node) && node.text === query && !isDeclarationIdentifier(node)) {
+      matches.push({
+        name: query,
+        path: relative,
+        ...declarationLocation(sourceFile, node),
+        revision,
+      });
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return matches;
+}
+
+export function findRepositoryReferences(
+  root: string,
+  queryInput: string,
+  options: SymbolLookupOptions = {},
+): RepositoryReferenceResult {
+  const query = queryInput.trim();
+  if (!query) throw new Error("reference query cannot be empty");
+  const scope = normalizedScope(options.path ?? ".");
+  if (scope === null) throw new Error(`${options.path ?? "."} is outside the repository`);
+  const index = options.index ?? indexRepository(root);
+  const maxFiles = DEFAULT_MAX_FILES;
+  const candidates = index.entries.filter(
+    (entry) =>
+      entry.type === "file" && isSupportedSource(entry.path) && insideScope(entry.path, scope),
+  );
+  const selected = candidates.slice(0, maxFiles);
+  const allMatches: RepositorySymbolReference[] = [];
+  let scannedFiles = 0;
+  let skippedLargeFiles = 0;
+  for (const entry of selected) {
+    if ((entry.bytes ?? 0) > DEFAULT_MAX_FILE_BYTES) {
+      skippedLargeFiles += 1;
+      continue;
+    }
+    try {
+      const source = readRepositoryText(root, entry.path, {
+        maxChars: DEFAULT_MAX_FILE_BYTES,
+      }).content;
+      allMatches.push(...extractSourceReferences(entry.path, source, query));
+      scannedFiles += 1;
+    } catch {}
+  }
+  allMatches.sort(
+    (left, right) =>
+      left.path.localeCompare(right.path) || left.line - right.line || left.column - right.column,
+  );
+  const maxResults = Math.max(1, options.maxResults ?? DEFAULT_MAX_RESULTS);
+  const matches = allMatches.slice(0, maxResults);
+  const truncated =
+    index.truncated || candidates.length > selected.length || allMatches.length > matches.length;
+  const output = [
+    `Syntax references for ${query} (${allMatches.length}):`,
+    ...(matches.length === 0
+      ? ["  (none)"]
+      : matches.map(
+          (match) =>
+            `  ${match.path}:${match.line}:${match.column}-${match.endLine}:${match.endColumn} [rev ${match.revision.slice(0, 12)}]`,
+        )),
+    ...(allMatches.length > matches.length
+      ? [`  … ${allMatches.length - matches.length} more`]
+      : []),
+    "Analysis: exact TypeScript/JavaScript identifier occurrences outside declaration sites; syntax-only, without alias, type, scope, or runtime resolution.",
+    `Scan: ${scannedFiles}/${candidates.length} supported files${skippedLargeFiles > 0 ? `; ${skippedLargeFiles} oversized files skipped` : ""}.`,
+    ...(truncated ? ["[reference scan truncated at the configured safety limit]"] : []),
+  ].join("\n");
+  return { query, matches, output, truncated };
 }
 
 export function findRepositorySymbols(

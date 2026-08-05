@@ -287,6 +287,16 @@ export const TOOLS: readonly ToolSpec[] = [
     textForm: "SYMBOL <name>",
   },
   {
+    name: "references",
+    mutates: false,
+    schema: z.strictObject({
+      query: z.string().min(1),
+      path: z.string().default("."),
+    }),
+    describe: (a) => `find syntax references to ${JSON.stringify(a["query"])}`,
+    textForm: "REFERENCES <name>",
+  },
+  {
     name: "delete",
     mutates: true,
     schema: z.strictObject({ path: path_ }),
@@ -377,9 +387,8 @@ export function textProtocolPrompt(): string {
     "  =======",
     "  the replacement text",
     "  >>>>>>> REPLACE",
-    "",
     "CREATE uses an empty SEARCH; READ path:start-end returns an exact bounded excerpt.",
-    "LIST is one directory; GLOB/GREP search all paths; RELATED shows modules/tests; SYMBOL finds declarations.",
+    "LIST/GLOB/GREP navigate; RELATED shows modules/tests; SYMBOL/REFERENCES inspect identifiers.",
     "DELETE never targets the root; MOVE/COPY/RENAME require an absent destination.",
     // Reverted from a longer version. Adding eight lines about marker
     // collisions and anchor sizing made things measurably WORSE: the task it
@@ -426,6 +435,9 @@ export function renderProposal(proposal: ActionProposal): string {
     }
     if (proposal.tool === "symbol") {
       return `SYMBOL ${String(args["query"] ?? "")}`;
+    }
+    if (proposal.tool === "references") {
+      return `REFERENCES ${String(args["query"] ?? "")}`;
     }
     if (proposal.tool === "grep") {
       return `GREP ${String(args["pattern"] ?? "")}`;
