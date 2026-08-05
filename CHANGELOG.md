@@ -2,6 +2,30 @@
 
 All notable product changes are recorded here. Forge follows semantic versioning from the 0.1 public-alpha line onward.
 
+## Unreleased
+
+### Added
+
+- Bounded retry budgets for a failing completion gate, with per-failure-class limits and a no-progress stop when a failure repeats unchanged. A stopped run is always a failed run.
+- Optional container execution backends (`--sandbox docker|podman`, `--image`, `--sandbox-network`, or an `execution` block in `forge.json`) for model commands and verification: repository-only mount, network off by default, no host path environment.
+- Versioned event contract: a `contract` first line on `--stream-json`, a `contract` field in the `--json` result, and a `forge contract` command.
+
+### Fixed
+
+Found by driving Forge through a real ten-session build with a 14B model; see `bench/DOGFOOD_LEDGER.md`.
+
+- A completion claimed with nothing committed is no longer accepted. A green pre-existing suite is not evidence that work happened, and such a run previously exited 0 with `ok: true`.
+- Creating or editing a path that is a directory now says so and names a way out, instead of advising an edit that cannot succeed.
+- `MKDIR` refuses a path whose name is a source file, which is what put a directory at `src/money.js` in the first place.
+- The repetition guard repeats why an action failed, not only that it did.
+- A read refused for being unchanged is permitted once when the harness itself refused the edit that read was meant to inform, removing a deadlock between the two guards.
+- A missing repository-relative module is classified as a code failure rather than a broken toolchain, and Python's `No module named` spelling is recognised.
+- A failed SEARCH anchor now shows the closest real lines from the file.
+
+### Changed
+
+- The verification gate returns its report alongside its objection so retries can be budgeted against what actually failed.
+
 ## 0.1.0 — 2026-08-04
 
 ### Added

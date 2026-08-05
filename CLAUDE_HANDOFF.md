@@ -12,7 +12,8 @@ engineering state.
 | Local suite (15 tasks, 3 trials) | **14/15** every trial, 0 false successes | `bench/DECOMPOSE_INSTRUCTION.md` |
 | Greenfield build | works, then over-reports | same |
 | Model scaling | 7B 4.8% / 14B 11.9-14.3% / 30B-MoE 64-67% | `bench/MODEL_SCALING.md` |
-| Tests | **340 pass, 1 skip** | `npm run check` on 2026-08-05 |
+| Tests | **394 pass, 3 skip** | `npm run check` on 2026-08-05 |
+| Dogfood build, 10 sessions, 14B | 6 harness defects found and fixed, incl. a false success | `bench/DOGFOOD_LEDGER.md` |
 
 ## Measurement discipline (read before running an experiment)
 
@@ -56,14 +57,73 @@ Git-worktree isolation and verified promotion, named model profiles,
 evidence-preserving compaction, promotion risk scanning, and explicit bounded
 headless lifecycle hooks.
 
-The current working slice adds typed recovery guidance at the verification boundary:
+Three slices landed on top of that, each with tests and a green `npm run check`:
+
+**Bounded retry (`src/retry.ts`).** `recovery.ts` classified failures but nothing
+consumed the classification, so a model that could not repair a failure
+re-reported completion every turn until the turn cap, paying a full suite run
+each time. The budget is per class -- four for syntax/type/test, two for
+flaky/unknown, one for timeout/toolchain/infrastructure, matching what each
+class's directive already tells the model. A failure whose command and
+normalized output repeat identically three times stops the run before any budget
+runs out. `gate()` now returns its report alongside its objection so the caller
+can budget against what failed; hook refusals and the no-test read-back path stay
+unbudgeted, since neither is a verification failure. Exhausting a budget leaves
+`code = 1` and calls `run.fail`, so a stopped run cannot promote (`result.ok`
+gates promotion) and cannot be read as success.
+
+One bug worth remembering: the no-progress signature was clipped *after* joining
+command and output, so a long inline `node -e` verification command filled the
+bound by itself and every failure hashed identical. Found by the CLI-level test,
+not the unit tests. The bound is now per run's output.
+
+**Execution backends (`src/backend.ts`).** The gap worktrees left: a worktree
+contains repository mutations, but the verification suite is arbitrary project
+code the model can edit, and it ran on the host. A backend decides *where*;
+`exec.ts` still decides how. The container backend is a command transform, not a
+second executor -- it builds `docker run`/`podman run` argv and hands it to the
+same `execBounded`, so timeout, group kill, merged output and clipping have one
+implementation. Repository mounted at `/workspace`, `--network none` unless
+asked, no host path variables (forwarding PATH/HOME/TMPDIR into an image
+replaces working container defaults with host paths that do not exist there),
+`--rm --init`, invoking uid under Docker only (rootless podman maps it already).
+A timed-out container is force-removed, because killing the client does not stop
+it. Selected by `--sandbox`/`--image`/`--sandbox-network` or `execution` in
+`forge.json`; a runtime without an image is a hard error before provider
+preflight, never a silent host fallback. Covers model `run`, the gate, and
+focused verification; benchmarks, hooks, and Git stay on the host deliberately.
+
+**Event contract (`src/contract.ts`).** `--stream-json` was the surface a client
+would build on and had no version. Runs now emit a `contract` record as the
+first line, before anything that can fail, the `--json` result carries the same
+version, and `forge contract` prints it without a run or a repository.
+Major.minor: minor is additive and unknown events must be skipped, major must be
+refused. The event registry is checked against the `RunEvent` union in
+`runtime.ts` by a test, so adding an event without registering it fails the
+suite.
+
+Not verified here: the two real-container tests skip when no runtime is present,
+and this machine had none. They run wherever Docker or Podman exists.
+
+**Then Forge was pointed at a real build** -- ten headless sessions against a
+14B, building a small ledger library -- which found six defects the unit suite
+could not. The worst: a run that committed nothing exited 0 with `ok: true`,
+because the pre-existing suite was green and a green suite was read as evidence
+of work. That is the false-success failure mode this project treats as the most
+dangerous one, and it was structural rather than a slip. Also fixed: an
+unrecoverable directory/file confusion, a deadlock between the read-before-edit
+and unchanged-read guards, `Cannot find module` on a repository path
+misclassified as a toolchain failure, a repetition guard that dropped the
+reason, and a failed SEARCH anchor that carried no hint. All six are in
+`bench/DOGFOOD_LEDGER.md` with the observed transcripts, and each was reproduced
+as a test before being fixed. The before/after there is n=1 per row and is not
+a measured improvement.
+
+The earlier recovery slice, unchanged:
 
 - `src/recovery.ts` classifies failures as syntax, type, test, timeout, toolchain, infrastructure, flaky, or unknown.
 - Classification is deterministic and based only on retained command metadata and bounded output; it never executes code or asks a model to classify its own failure.
-- `formatForModel` now names the detected class and appends exactly one bounded recovery directive.
-- Timeout recovery forbids repeating the same broad command unchanged; toolchain recovery treats setup as environment work; infrastructure recovery stops speculative code edits and permits at most one retry after checking the reported condition.
-- Flaky verification retains its nondeterminism-specific path and receives a matching bounded directive.
-- Focused recovery/verifier tests pass 30/30; `npm run check` passes 340 tests with one intentional pty skip; `npm run build` passes.
+- `formatForModel` names the detected class and appends exactly one bounded recovery directive.
 
 ### Historical verification-gate context
 
@@ -75,10 +135,21 @@ failed 1 run in 6. Confirmation prevents that pass from laundering a bad change.
 
 ## Open, in product-plan order
 
-1. **Automatic bounded retry execution and no-progress classification.** Verification failures now have deterministic classes and one recovery directive; the runtime still needs per-class retry budgets and fail-stop rules.
-2. **Execution-backend interface and optional Docker/Podman isolation.** Current worktrees isolate repository mutations only; commands still run on the host.
-3. **Versioned server/event contract**, followed by IDE clients, MCP, and a small permissioned extension API.
-4. **Benchmark follow-up.** The second full-225 replication and current Little Coder comparison remain useful, but no new product slice should claim a score gain without paired evidence.
+1. **Container backend hardening.** Resource limits (CPU, memory, process count,
+   disk) and read-only host mounts; the current backend bounds time and output
+   only. The real-container tests need a run on a machine that has a runtime.
+2. **Retry budgets under measurement.** The budgets are reasoned from each
+   class's directive, not measured. Whether they help, hurt, or do nothing on
+   the 225 is unknown -- and per the discipline below, a plausible-sounding
+   number is exactly the kind of thing that has lost before. Mechanism first:
+   the run no longer burns twelve turns on an unrepairable failure, which is
+   true regardless of score.
+3. **The server on top of the contract.** The contract versions the stream;
+   there is still no server. Then IDE clients, MCP, and a small permissioned
+   extension API.
+4. **Benchmark follow-up.** The second full-225 replication and current Little
+   Coder comparison remain useful, but no new product slice should claim a score
+   gain without paired evidence.
 
 ## Constraints
 

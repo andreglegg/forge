@@ -30,7 +30,10 @@ attempt are archived under `legacy/` and are not maintained.
 - `context.ts`: retrieval and budgeted prompt assembly; no model calls.
 - `instructions.ts`: deterministic project-instruction discovery.
 - `exec.ts`: bounded command execution, `shell: false`, token arrays only.
+- `backend.ts`: where a command runs; host by default, optional container isolation.
 - `verify.ts`: the completion gate; the project's own commands are authoritative.
+- `recovery.ts` / `retry.ts`: failure classification and the bounded repair budget.
+- `contract.ts`: the versioned event contract external clients read.
 - `session.ts` / `replay.ts`: recorded runs and offline decoder scoring.
 - `bench.ts` / `polyglot.ts` / `compare.ts`: isolated benchmark execution.
 - `cli.ts`: user interaction, orchestration and dependency assembly.

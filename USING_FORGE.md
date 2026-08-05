@@ -195,13 +195,21 @@ deciding *what* to build. Do not assume it transfers.
    First-class tree operations stop above 10,000 entries or 128 MiB; larger or
    specialized work requires an explicitly approved command without structured
    per-entry undo.
-4. **Do not enable unfamiliar hooks.** Forge never auto-runs configured hooks;
+4. **Use `--sandbox` on a repository you do not trust.** `--sandbox docker
+   --image node:22` (or `podman`) runs the model's commands and the
+   verification gate inside a container: only the repository is mounted, at
+   `/workspace`, with no network unless you add `--sandbox-network` and none of
+   your host's PATH, HOME, or credentials. This is the control that addresses
+   repository-controlled build and test scripts, which `--isolate` does not.
+   The image must have your toolchain in it; Forge will not guess one. Set it
+   permanently with an `execution` block in `forge.json`.
+5. **Do not enable unfamiliar hooks.** Forge never auto-runs configured hooks;
    `--hooks` is your explicit consent to execute those repository commands.
-5. **Read the diff.** Its self-report is not evidence. The one measured failure
+6. **Read the diff.** Its self-report is not evidence. The one measured failure
    mode that matters is a confident wrong finish, and the defence is your eyes.
-6. **Prefer many small tasks to one large one.** The 14/14 tasks are all
+7. **Prefer many small tasks to one large one.** The 14/14 tasks are all
    single-purpose. Nothing suggests a 10-step request behaves as well.
-7. **Re-run your tests yourself after it finishes.** Since 2026-08-04 the
+8. **Re-run your tests yourself after it finishes.** Since 2026-08-04 the
    completion gate re-runs a passing suite to confirm it (`bench/PROJECT_TRIAL.md`),
    but your suite is yours.
 

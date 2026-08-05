@@ -36,6 +36,7 @@ Repository files, user instructions, generated model output, tool output, depend
 - Commands run with a reduced environment that excludes provider credentials.
 - Duration, output, and process lifetime are bounded; timeouts terminate the process group.
 - In attended mode, command execution requires a separate approval. Headless execution requires the explicit `--yes` option.
+- Commands run on an execution backend. The default is the host, unchanged. `--sandbox docker|podman` (or `execution` in `forge.json`) runs model commands and the verification gate inside a container with only the repository mounted at `/workspace`, no network unless `--sandbox-network` is given, no host environment variables beyond locale and output-shape settings, and the invoking uid under Docker. A container runtime named without an image is a hard error before the provider is contacted, never a silent fallback to the host.
 
 ### Model output and persistence
 
@@ -75,18 +76,17 @@ An approved build or test command can execute arbitrary repository-controlled co
 
 The current TypeScript product does not yet provide:
 
-- container, VM, seccomp, AppArmor, or restricted-user isolation;
-- network denial for repository commands;
+- VM, seccomp, AppArmor, or restricted-user isolation, or container isolation for anything other than model commands and the verification gate (benchmarks, hooks, and Git operations still run on the host);
 - CPU, memory, process-count, or disk quotas beyond command timeout/output bounds;
 - semantic aliases, inferred types, overload identity, references/callers, package exports, or TypeScript path-alias resolution;
 - complete dependency-confusion analysis or a guarantee that heuristic patch scanning finds every secret;
 - a third-party plugin or MCP permission boundary;
 - interactive lifecycle hooks or a versioned third-party hook API.
 
-Do not run Forge with elevated privileges or use autonomous approval on an untrusted repository. Git-worktree isolation protects the user's selected checkout from unpromoted edits, but it does not isolate processes, network, credentials available outside Forge's scrubbed command environment, or the host filesystem.
+Do not run Forge with elevated privileges or use autonomous approval on an untrusted repository. Git-worktree isolation protects the user's selected checkout from unpromoted edits, but it does not isolate processes; on the default host backend it does not isolate the network, credentials available outside Forge's scrubbed command environment, or the host filesystem. A container backend addresses those for the commands it runs, and is opt-in.
 
 ## Production-hardening direction
 
-The next execution-backend layer is optional container isolation with network-off defaults, resource limits, and read-only host mounts. External tools, MCP servers, and plugins must pass through the same permission, timeout, output-bound, and audit-journal boundaries as built-in tools. The shipped headless hooks are repository commands, not yet a general extension API.
+Optional container isolation with network-off defaults has shipped. The next execution-backend work is resource limits (CPU, memory, process count, disk) and covering the remaining host-executed paths. External tools, MCP servers, and plugins must pass through the same permission, timeout, output-bound, and audit-journal boundaries as built-in tools. The shipped headless hooks are repository commands, not yet a general extension API.
 
 Security reports should include a reproducible case and affected version. Do not include real credentials or private repository content.

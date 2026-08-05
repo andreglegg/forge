@@ -64,7 +64,17 @@ The same module powers one-level `LIST`, deep `GLOB`, regex `GREP`, literal `SEA
 
 Finalization captures tracked changes and non-ignored new files as a binary Git patch under the original repository's ignored `.forge/isolated/` directory. Evidence is transferred back before cleanup. `--promote` is allowed only after a successful verified run and rechecks the original commit, working-tree cleanliness, and `git apply --check` before applying the patch.
 
-This isolates repository mutations, not processes. Commands still execute on the host until a container backend exists.
+This isolates repository mutations, not processes.
+
+`src/backend.ts` covers the process gap. An execution backend decides *where* a command runs; `src/exec.ts` still decides how. The host backend is the default and is the previous behaviour exactly. A container backend builds `docker run` / `podman run` argv -- repository mounted at `/workspace`, `--network none` unless asked, no host path variables, `--rm --init`, invoking uid under Docker -- and hands that argv to the same `execBounded`, so timeout, process-group kill, merged output and output clipping are one implementation rather than two. A timed-out container is force-removed, since killing the client does not stop it. Backends are selected by `--sandbox` / `--image` / `--sandbox-network` or the `execution` block in `forge.json`, and cover model `run` commands, the completion gate, and focused verification.
+
+## Retry budgets
+
+`src/retry.ts` bounds the repair loop the gate opens. `src/recovery.ts` classifies a verification failure and adds one directive; the budget decides how many times that is worth repeating. Repairable classes (syntax, type, test) get four retries, flaky two, unknown two, and the classes whose cause lies outside the repository (timeout, toolchain, infrastructure) get one, matching their directives. A failure whose command and normalized output are identical three times running stops the run earlier than any budget, on the grounds that the last attempts changed nothing observable. Exhausting a budget can only end a run as failed; there is no path from a spent budget to an accepted change, and promotion still requires a verified gate.
+
+## The event contract
+
+`src/contract.ts` versions what external clients read. `--stream-json` runs emit a `contract` record as their first line, before anything that can fail, and the `--json` result document carries the same version. `forge contract` prints it without starting a run or needing a repository. Versioning is major.minor: a minor bump is additive and unknown event types must be skipped rather than treated as fatal; a major bump is anything a client could misread and must be refused. The registry of event types is checked against the `RunEvent` union in `runtime.ts` by a test, so adding an event without declaring it fails the suite.
 
 ## Persistence and recovery
 
