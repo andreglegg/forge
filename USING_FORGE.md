@@ -105,6 +105,17 @@ For automation, `--json` writes one final document. `--stream-json` writes one
 JSON object per durable Run event and ends with a `{"type":"result",...}` record.
 Do not combine the two modes.
 
+`forge serve` serves that same stream bidirectionally over stdio for a client
+that spawns the process: the contract header is the first line and now
+advertises the accepted request types, then the client submits NDJSON requests —
+`{"type":"run.start","task":...}`, `{"type":"approve","id":...,"decision":
+"once"|"always"|"deny"}`, `{"type":"cancel"}`, `{"type":"shutdown"}` — and runs
+execute serially through the same orchestration, permission modes, gate, and
+session journals as `forge run`. Without `--yes`, approvals are resolved by the
+client's `approve` request instead of being auto-denied. Malformed or unknown
+requests get an error envelope and never affect an active run; client disconnect
+denies pending approvals, cancels the active run, and exits nonzero.
+
 Headless lifecycle hooks are explicit opt-in repository code. Define token-array
 commands under `hooks.sessionStart`, `hooks.beforeVerify`, `hooks.afterVerify`,
 and `hooks.sessionEnd`, then add `--hooks` to `forge run` or `forge plan`.

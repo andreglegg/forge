@@ -25,7 +25,7 @@
 
 import { FORGE_VERSION } from "./version.js";
 
-export const EVENT_CONTRACT_VERSION = "1.1";
+export const EVENT_CONTRACT_VERSION = "1.2";
 
 /**
  * Every event type that can appear in the stream or a session journal.
@@ -58,6 +58,13 @@ export const EVENT_TYPES = [
 /** The envelopes that carry those events on the wire. */
 export const ENVELOPE_TYPES = ["contract", "event", "result", "error"] as const;
 
+/**
+ * 1.2: the closed request vocabulary `forge serve` accepts on stdin. Advertised
+ * in the header so a client can negotiate what input the server takes before it
+ * sends anything; a request outside this set is refused, never guessed at.
+ */
+export const REQUEST_TYPES = ["run.start", "approve", "cancel", "shutdown"] as const;
+
 export interface ContractHeader {
   readonly type: "contract";
   readonly contract: {
@@ -65,6 +72,7 @@ export interface ContractHeader {
     readonly forge: string;
     readonly envelopes: readonly string[];
     readonly events: readonly string[];
+    readonly requests: readonly string[];
   };
 }
 
@@ -77,6 +85,7 @@ export function contractHeader(): ContractHeader {
       forge: FORGE_VERSION,
       envelopes: [...ENVELOPE_TYPES],
       events: [...EVENT_TYPES],
+      requests: [...REQUEST_TYPES],
     },
   };
 }

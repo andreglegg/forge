@@ -978,6 +978,62 @@ describe("a completion can be retracted", () => {
   });
 });
 
+describe("a cancel cannot be laundered into a completion", () => {
+  test("a cancel observed by a proposal-free final turn is journalled, not swallowed", async () => {
+    // The served-run failure mode: the client cancels while the model streams a
+    // bare "DONE finished" reply. The cancelled flag used to be checked only
+    // per-proposal, so a turn with zero proposals sailed past it, emitted
+    // `run.finished ok:true`, and the journal carried no trace the client ever
+    // spoke. The cancel must win: exactly one `run.cancelled`, no completion.
+    await withRepo(async (dir) => {
+      const run = new Run({ workspace: new Workspace(dir), ...NOOP_TOOLS });
+      const { events, drained } = collect(run);
+      run.start("stop this");
+      run.send({ type: "cancel" });
+
+      const outcome = await run.submit({ text: "DONE finished", proposals: [], final: "finished" });
+
+      expect(outcome.finished).toBe(false);
+      expect(run.snapshot().cancelled).toBe(true);
+      expect(run.snapshot().ok).toBe(false);
+      run.close();
+      await drained;
+      expect(events.filter((event) => event.type === "run.cancelled")).toHaveLength(1);
+      expect(events.some((event) => event.type === "run.finished")).toBe(false);
+    });
+  });
+
+  test("a cancel that lands after the last proposal still beats the same turn's DONE", async () => {
+    // Same race, later window: the flag flips between the final proposal's
+    // execution and the completion claim at the end of the turn.
+    await withRepo(async (dir) => {
+      writeFileSync(path.join(dir, "a.txt"), "content\n");
+      const run: Run = new Run({
+        workspace: new Workspace(dir),
+        runTool: async () => {
+          run.send({ type: "cancel" });
+          return { ok: true, output: "content" };
+        },
+      });
+      const { events, drained } = collect(run);
+      run.start("stop this");
+
+      const outcome = await run.submit({
+        text: "READ then DONE",
+        proposals: [{ kind: "call", tool: "read", arguments: { path: "a.txt" } }],
+        final: "finished",
+      });
+
+      expect(outcome.finished).toBe(false);
+      expect(run.snapshot().cancelled).toBe(true);
+      run.close();
+      await drained;
+      expect(events.filter((event) => event.type === "run.cancelled")).toHaveLength(1);
+      expect(events.some((event) => event.type === "run.finished")).toBe(false);
+    });
+  });
+});
+
 describe("classification", () => {
   test("edits and commands mutate; reads and searches do not", () => {
     expect(

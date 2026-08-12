@@ -585,6 +585,21 @@ export class Run {
     resolve(command.decision);
   }
 
+  /**
+   * A cancel is a fact the journal must carry, wherever the run notices it.
+   *
+   * The flag is set asynchronously by `send`, so it can land at any await
+   * point: before a turn is processed, between proposals, or between the last
+   * proposal and the turn's completion claim. Every one of those windows calls
+   * this; `run.cancelled` is emitted exactly once no matter how many observe
+   * it, so a double cancel (client plus disconnect) stays idempotent.
+   */
+  private observeCancellation(): boolean {
+    if (!this.cancelled) return false;
+    if (!this.state.cancelled) this.emit({ type: "run.cancelled" });
+    return true;
+  }
+
   private emit(event: EmittedEvent): void {
     this.seq += 1;
     const full = { ...event, seq: this.seq } as RunEvent;
@@ -624,6 +639,11 @@ export class Run {
     /** Decoder repairs for this turn. `truncated_edit_block` is the one that matters here. */
     repairs?: readonly string[];
   }): Promise<TurnResult> {
+    // A cancel that arrived while the model was streaming wins before the turn
+    // is processed at all. Without this, a turn carrying no proposals -- a bare
+    // DONE is the observed case -- sailed past the per-proposal check below and
+    // laundered the cancel into `run.finished ok:true`.
+    if (this.observeCancellation()) return { results: [], finished: false };
     this.emit({ type: "turn.started", turn: this.state.turn + 1 });
     if (turn.text) {
       this.emit({ type: "model.text", text: turn.text });
@@ -684,10 +704,7 @@ export class Run {
     let committedThisTurn = false;
 
     for (let proposal of turn.proposals) {
-      if (this.cancelled) {
-        this.emit({ type: "run.cancelled" });
-        return { results, finished: false };
-      }
+      if (this.observeCancellation()) return { results, finished: false };
       this.counter += 1;
       const id = `a${this.counter}`;
       const summary = describeProposal(proposal);
@@ -857,6 +874,9 @@ export class Run {
     if (turn.final === null) {
       return { results, finished: false };
     }
+    // The last window: a cancel that landed after the final proposal ran. The
+    // client's cancel outranks the model's completion claim in the same turn.
+    if (this.observeCancellation()) return { results, finished: false };
     // A model does not get to declare victory in a turn whose own actions
     // failed. Observed live: the edit's anchor did not match, and the very
     // next reply was "Added fahrenheitToCelsius ... exported like the existing

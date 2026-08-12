@@ -129,6 +129,7 @@ import {
 import { RetryBudget, stopNotice } from "./retry.js";
 import { decidePromotionRisk, type PatchRisk, scanPatchRisks } from "./risk.js";
 import { type ActionResult, ApprovalPolicy, Run, type RunEvent, replay } from "./runtime.js";
+import { type RunChannel, type ServeInput, serve } from "./server.js";
 import { newSessionId, SessionStore } from "./session.js";
 import { summarize, TurnMeter, type TurnUsage } from "./usage.js";
 import { detectCommands, formatForModel, type VerificationReport, verify } from "./verify.js";
@@ -157,6 +158,7 @@ const USAGE = [
   "  forge                    interactive chat in the current directory",
   "  forge run <task>         one shot, exits 0 on success",
   "  forge plan <task>        inspect and produce a plan without effects",
+  "  forge serve              serve runs over stdio: NDJSON requests in, envelopes out",
   "  forge continue [id]      reopen interactive chat with retained history",
   "  forge resume [id]        alias for continue",
   "  forge doctor             validate project, provider, model, and verifier",
@@ -893,7 +895,11 @@ async function oneTurn(
   };
 }
 
-export async function main(argv: readonly string[], io: IO = consoleIO): Promise<number> {
+export async function main(
+  argv: readonly string[],
+  io: IO = consoleIO,
+  input: ServeInput = process.stdin,
+): Promise<number> {
   const { command, rest, options } = parseArgs(argv);
   if (options["version"] === true || command === "version") {
     io.out(FORGE_VERSION);
@@ -910,6 +916,9 @@ export async function main(argv: readonly string[], io: IO = consoleIO): Promise
     return 0;
   }
 
+  // serve is stream-json by construction: its whole surface is the envelope
+  // stream, so the flag is implied rather than required.
+  if (command === "serve") options["stream-json"] = true;
   if (options["json"] === true && options["stream-json"] === true) {
     io.err("Choose either --json or --stream-json, not both.");
     return 2;
@@ -1167,12 +1176,17 @@ export async function main(argv: readonly string[], io: IO = consoleIO): Promise
     command === null ||
     command === "run" ||
     command === "plan" ||
+    command === "serve" ||
     command === "continue" ||
     command === "resume";
   if (codingCommand) {
     // First line, before anything that can fail. A client that reads a preflight
     // error as its first record still learns which contract that error is in.
-    if (options["stream-json"] === true) io.out(JSON.stringify(contractHeader()));
+    // serve owns its own first line, so printing here would double the header;
+    // its preflight-failure path repeats the rule below.
+    if (options["stream-json"] === true && command !== "serve") {
+      io.out(JSON.stringify(contractHeader()));
+    }
     // Checked before the provider is contacted: a sandbox misconfiguration is
     // local, certain, and cheap to report, and there is no reason to spend a
     // network round trip discovering it.
@@ -1190,6 +1204,8 @@ export async function main(argv: readonly string[], io: IO = consoleIO): Promise
           JSON.stringify({ ok: false, error: "provider_preflight", message, provider }, null, 2),
         );
       } else if (options["stream-json"] === true) {
+        // serve never starts, so its header-first promise is honored here.
+        if (command === "serve") io.out(JSON.stringify(contractHeader()));
         io.out(JSON.stringify({ type: "error", error: "provider_preflight", message, provider }));
       } else io.err(message);
       return 2;
@@ -1636,6 +1652,29 @@ export async function main(argv: readonly string[], io: IO = consoleIO): Promise
     // cannot silently succeed on a directory with nothing in it.
     return records.length === 0 ? 2 : 0;
   }
+  if (command === "serve") {
+    // One assembled process serves many runs: the workspace, config, project,
+    // mode and preflight above are paid once, and each run.start goes through
+    // the same headless orchestration `forge run` uses -- with the channel
+    // standing where the TTY user would for approvals.
+    return await serve(input, io, {
+      startRun: (task, channel) =>
+        headless(
+          task,
+          workspace,
+          config,
+          controller,
+          options,
+          io,
+          native,
+          project,
+          mode,
+          undefined,
+          channel,
+        ),
+      interrupt: () => controller.abort(),
+    });
+  }
   if (command === "run" || command === "plan") {
     const task = rest.join(" ").trim();
     if (!isolate) {
@@ -1973,6 +2012,7 @@ async function headless(
   project: ProjectConfig,
   mode: PermissionMode,
   finalize?: HeadlessFinalizer,
+  channel?: RunChannel,
 ): Promise<number> {
   if (!task) {
     io.err("forge run needs a task description.");
@@ -1989,6 +2029,7 @@ async function headless(
     makeRunEffects(workspace, controller.signal, mode, backend),
     options["yes"] === true,
   );
+  channel?.attach(run);
   const asJson = options["json"] === true;
   const streamJson = options["stream-json"] === true;
   if (backend.settings !== null && !asJson && !streamJson) {
@@ -2014,9 +2055,16 @@ async function headless(
         if (line !== null) io.out(line);
       }
       // Without --yes there is nobody to ask, so an approval request is a
-      // refusal rather than a hang.
-      if (event.type === "approval.requested" && options["yes"] !== true) {
-        run.send({ type: "approve", id: event.id, decision: "deny" });
+      // refusal rather than a hang -- unless a serve channel is attached, in
+      // which case the wire client stands where the TTY user would and its
+      // explicit decision resolves the approval instead.
+      if (event.type === "approval.requested") {
+        if (channel !== undefined) channel.requested(event.id);
+        else if (options["yes"] !== true) {
+          run.send({ type: "approve", id: event.id, decision: "deny" });
+        }
+      } else if (event.type === "approval.resolved") {
+        channel?.resolved(event.id);
       }
     }
   })();
@@ -2071,6 +2119,10 @@ async function headless(
         options["batch-actions"] === true,
       );
       usages.push(meter.finish());
+      // A served client cancelled: the turn that observed it has journalled
+      // run.cancelled, and continuing would burn the remaining turns
+      // rediscovering the flag one proposal at a time.
+      if (run.snapshot().cancelled) break;
       // Nothing is happening. Continuing would only spend the remaining turns
       // rediscovering that; the reason is already in the results above.
       if (result.stalled) break;

@@ -15,6 +15,7 @@ import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import { type IO, main } from "../src/cli.js";
 import { compactTranscript, compactTranscriptReported } from "../src/compaction.js";
+import { EVENT_CONTRACT_VERSION } from "../src/contract.js";
 import type { Message } from "../src/provider.js";
 import { Run, type RunEvent, replay } from "../src/runtime.js";
 import { SessionStore } from "../src/session.js";
@@ -271,7 +272,7 @@ describe("the stream surface", () => {
       contract: { version: string; events: string[] };
     };
     expect(header.type).toBe("contract");
-    expect(header.contract.version).toBe("1.1");
+    expect(header.contract.version).toBe(EVENT_CONTRACT_VERSION);
     expect(header.contract.events).toContain("context.compacted");
 
     const events = out

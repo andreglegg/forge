@@ -20,6 +20,7 @@ import {
   ENVELOPE_TYPES,
   EVENT_CONTRACT_VERSION,
   EVENT_TYPES,
+  REQUEST_TYPES,
 } from "../src/contract.js";
 
 const SOURCE = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "src");
@@ -32,6 +33,7 @@ describe("the contract header", () => {
     expect(header.contract.forge).toMatch(/^\d+\.\d+\.\d+/);
     expect(header.contract.events).toEqual([...EVENT_TYPES]);
     expect(header.contract.envelopes).toEqual([...ENVELOPE_TYPES]);
+    expect(header.contract.requests).toEqual([...REQUEST_TYPES]);
   });
 
   test("is a version a client can parse", () => {
@@ -39,8 +41,15 @@ describe("the contract header", () => {
   });
 
   test("names the compaction telemetry that 1.1 added", () => {
-    expect(EVENT_CONTRACT_VERSION).toBe("1.1");
     expect(EVENT_TYPES).toContain("context.compacted");
+  });
+
+  test("names the serve request vocabulary that 1.2 added", () => {
+    // Additive minor: the header gains `requests`, so a client can negotiate
+    // what input the server accepts. Envelopes and events are unchanged.
+    expect(EVENT_CONTRACT_VERSION).toBe("1.2");
+    expect(REQUEST_TYPES).toEqual(["run.start", "approve", "cancel", "shutdown"]);
+    expect(ENVELOPE_TYPES).toEqual(["contract", "event", "result", "error"]);
   });
 });
 
