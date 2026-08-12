@@ -60,6 +60,15 @@ import {
   type ExtensionResolution,
   invokeExtensions,
 } from "./extension.js";
+import {
+  composePullRequestBody,
+  fetchIssueTask,
+  type IssueReference,
+  type PullRequestPublication,
+  parseIssueReference,
+  publishPullRequest,
+  pullRequestTitle,
+} from "./github.js";
 import { formatHookFailure, type HookReport, runProjectHooks } from "./hooks.js";
 import { projectInstructionItems, projectSkillItems } from "./instructions.js";
 import {
@@ -204,6 +213,8 @@ const USAGE = [
   "  --isolate                run in a detached temporary Git worktree",
   "  --promote                apply a verified isolated patch to the original",
   "  --allow-risk             override critical patch-risk promotion blocks",
+  "  --from-issue <ref>       fetch a GitHub issue with gh and use it as the task",
+  "  --pr                     publish a verified isolated run as one fresh draft PR",
   "  --hooks                  enable repository hooks for headless runs",
   "  --extensions             enable forge.json extensions for headless runs",
   "  --mcp                    start forge.json MCP servers for a headless run",
@@ -987,8 +998,23 @@ export async function main(
     io.err("--promote requires verification; remove --no-verify.");
     return 2;
   }
-  if (allowRisk && (!isolate || !promote)) {
-    io.err("--allow-risk requires --isolate --promote.");
+  const pr = options["pr"] === true;
+  // A string value means a following positional was swallowed by the flag
+  // parser; silently dropping a publication request is worse than refusing.
+  if (typeof options["pr"] === "string") {
+    io.err("--pr takes no value; place the task before the flag.");
+    return 2;
+  }
+  if (pr && !isolate) {
+    io.err("--pr requires --isolate.");
+    return 2;
+  }
+  if (pr && options["no-verify"] === true) {
+    io.err("--pr requires verification; remove --no-verify.");
+    return 2;
+  }
+  if (allowRisk && (!isolate || (!promote && !pr))) {
+    io.err("--allow-risk requires --isolate --promote or --isolate --pr.");
     return 2;
   }
   if (isolate && (command !== "run" || mode !== "workspace")) {
@@ -1008,6 +1034,19 @@ export async function main(
   if (mcpEnabled && command !== "run") {
     io.err("--mcp is currently supported only by headless `forge run`.");
     return 2;
+  }
+  const fromIssue = options["from-issue"];
+  let issueReference: IssueReference | null = null;
+  if (fromIssue !== undefined) {
+    if (command !== "run" && command !== "plan") {
+      io.err("--from-issue is currently supported only by `forge run` and `forge plan`.");
+      return 2;
+    }
+    issueReference = typeof fromIssue === "string" ? parseIssueReference(fromIssue) : null;
+    if (issueReference === null) {
+      io.err("--from-issue needs <n>, #<n>, owner/repo#<n>, or a full github.com issue URL.");
+      return 2;
+    }
   }
   const offline =
     command === "replay" ||
@@ -1757,7 +1796,20 @@ export async function main(
   }
   if (command === "run" || command === "plan") {
     try {
-      const task = rest.join(" ").trim();
+      let task = rest.join(" ").trim();
+      let issueUrl: string | null = null;
+      if (issueReference !== null) {
+        // The issue body is untrusted task text: bounded, composed
+        // deterministically, and never a command. Positional text rides along
+        // as extra guidance.
+        const fetched = await fetchIssueTask(issueReference, root, task);
+        if (!fetched.ok) {
+          io.err(fetched.error);
+          return 2;
+        }
+        task = fetched.task;
+        issueUrl = fetched.url;
+      }
       if (!isolate) {
         return await headless(
           task,
@@ -1797,7 +1849,11 @@ export async function main(
           native,
           project,
           mode,
-          isolatedFinalizer(isolated, promote, allowRisk, options, io),
+          isolatedFinalizer(isolated, promote, allowRisk, options, io, {
+            requested: pr,
+            task,
+            issueUrl,
+          }),
           undefined,
           mcp,
         );
@@ -2001,6 +2057,11 @@ function isolatedFinalizer(
   allowRisk: boolean,
   options: Readonly<Record<string, string | boolean>>,
   io: IO,
+  publish: {
+    readonly requested: boolean;
+    readonly task: string;
+    readonly issueUrl: string | null;
+  },
 ): HeadlessFinalizer {
   return async (result) => {
     const errors: string[] = [];
@@ -2046,6 +2107,26 @@ function isolatedFinalizer(
         }
       }
     }
+    // Publication answers to the same gate as promotion: a verified result, a
+    // real change, and a risk decision that allows release. It must run while
+    // the worktree still exists, so it sits before removal.
+    let publication: PullRequestPublication | null = null;
+    let publicationBlocked: string | null = null;
+    if (publish.requested) {
+      if (!result.ok) {
+        publicationBlocked = "the run did not pass its gates; nothing was published";
+      } else if (patch?.changed !== true) {
+        publicationBlocked = "the isolated run changed nothing; nothing was published";
+      } else if (!riskDecision.allowed) {
+        publicationBlocked = riskDecision.reason;
+      } else {
+        publication = await publishPullRequest(worktree, {
+          sessionId: result.session,
+          title: pullRequestTitle(publish.task),
+          body: composePullRequestBody(result.session, publish.issueUrl),
+        });
+      }
+    }
     try {
       await removeIsolatedWorktree(worktree);
     } catch (error) {
@@ -2069,10 +2150,21 @@ function isolatedFinalizer(
         io.err(`${risk.severity}: ${risk.file ?? "patch"} · ${risk.message}`);
       }
       if (promotionBlocked !== null) io.err(promotionBlocked);
+      if (publication !== null) {
+        if (publication.ok) {
+          io.out(`draft pull request opened · ${publication.url ?? publication.branch}`);
+        } else io.err(publication.error ?? "draft pull request publication failed");
+      }
+      if (publicationBlocked !== null) io.err(publicationBlocked);
       for (const error of errors) io.err(error);
     }
     return {
-      ...(errors.length > 0 || promotionBlocked !== null ? { code: 2 } : {}),
+      ...(errors.length > 0 ||
+      promotionBlocked !== null ||
+      publicationBlocked !== null ||
+      publication?.ok === false
+        ? { code: 2 }
+        : {}),
       metadata: {
         isolation: {
           id: worktree.id,
@@ -2087,6 +2179,19 @@ function isolatedFinalizer(
           promotionBlocked,
           errors,
         },
+        ...(publish.requested
+          ? {
+              github: {
+                requested: true,
+                branch: publication?.branch ?? null,
+                pushed: publication?.pushed ?? false,
+                pullRequest: publication?.url ?? null,
+                blocked: publicationBlocked,
+                error: publication?.error ?? null,
+                invocations: publication?.invocations ?? [],
+              },
+            }
+          : {}),
       },
     };
   };

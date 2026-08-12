@@ -32,7 +32,7 @@ This roadmap applies to the current TypeScript product. See `STATUS.md` for the 
 - MCP client support through Forge permissions, timeouts, output bounds, and audit events.
 - Small skill and verification-adapter API.
 - Stable stream protocol and server mode for IDEs and local automation.
-- GitHub issue and pull-request workflows.
+- GitHub issue and pull-request workflows: the first slice has shipped (`--from-issue` task import and draft-PR publication from verified isolated runs); re-run PR updates, comments, reviews, and Enterprise hosts remain open.
 - Read-only research subagents for independent repository investigation.
 
 ## 1.0 exit criteria
