@@ -5,6 +5,10 @@ export default defineConfig({
     include: ["tests/**/*.test.ts"],
     environment: "node",
 
+    // Scrub inherited FORGE_* so default-resolution assertions hold no matter
+    // what the invoking shell exports.
+    setupFiles: ["tests/setup-env.ts"],
+
     // Explicit imports of `test`/`expect`/`vi` rather than ambient globals.
     // The port injects dependencies at the module boundary instead of
     // monkeypatching module attributes, so tests import what they use.
