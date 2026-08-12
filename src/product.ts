@@ -68,12 +68,51 @@ const ExecutionSchema = z
   })
   .strict();
 
+/**
+ * Bounded and compiled at load: an invalid or oversize pattern is a hard
+ * config error before any provider preflight, never a silent skip. The cap is
+ * the ReDoS mitigation that pairs with verify.ts matching line-by-line.
+ */
+const ADAPTER_PATTERN_MAX_CHARS = 500;
+
+function compilesAsRegExp(source: string): boolean {
+  try {
+    new RegExp(source);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const AdapterPatternSchema = z
+  .string()
+  .min(1)
+  .max(ADAPTER_PATTERN_MAX_CHARS)
+  .refine(compilesAsRegExp, { message: "must be a valid regular expression" });
+
+/**
+ * A declarative verdict-strictener for one verify command: `failWhen` fails an
+ * exit-0 run, `evidence` reshapes the failure body. There is no field that can
+ * turn a failure into a pass.
+ */
+const VerifyAdapterSchema = z
+  .object({
+    command: z.array(z.string()).min(1),
+    failWhen: AdapterPatternSchema.optional(),
+    evidence: AdapterPatternSchema.optional(),
+  })
+  .strict()
+  .refine((adapter) => adapter.failWhen !== undefined || adapter.evidence !== undefined, {
+    message: "an adapter must declare failWhen, evidence, or both",
+  });
+
 const ProjectConfigSchema = z
   .object({
     execution: ExecutionSchema.optional(),
     url: z.string().url().optional(),
     model: z.string().min(1).optional(),
     verify: z.array(z.array(z.string()).min(1)).optional(),
+    verifyAdapters: z.array(VerifyAdapterSchema).optional(),
     profile: z.string().min(1).optional(),
     profiles: z.record(z.string().min(1), ModelProfileSchema).optional(),
     hooks: HooksSchema.optional(),
@@ -82,7 +121,28 @@ const ProjectConfigSchema = z
     // model can edit, so starting them stays behind the explicit --mcp flag.
     mcp: McpConfigSchema.optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((config, ctx) => {
+    // Matching is exact token-array equality, so an adapter naming a command
+    // absent from `verify` could never apply. Refusing to load is the honest
+    // failure: an orphaned adapter that loaded would silently stop guarding
+    // the very output it was written to distrust.
+    const verify = config.verify ?? [];
+    for (const [index, adapter] of (config.verifyAdapters ?? []).entries()) {
+      const matched = verify.some(
+        (command) =>
+          command.length === adapter.command.length &&
+          command.every((token, position) => token === adapter.command[position]),
+      );
+      if (!matched) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["verifyAdapters", index, "command"],
+          message: `does not match any verify command exactly: ${adapter.command.join(" ")}`,
+        });
+      }
+    }
+  });
 
 export type ModelProfile = z.infer<typeof ModelProfileSchema>;
 export type ProjectHooks = z.infer<typeof HooksSchema>;

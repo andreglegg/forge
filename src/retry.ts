@@ -1,4 +1,8 @@
-import { classifyVerificationReport, type FailureClass } from "./recovery.js";
+import {
+  classifyVerificationReport,
+  type FailureClass,
+  verificationRunFailed,
+} from "./recovery.js";
 import type { VerificationReport } from "./verify.js";
 
 /**
@@ -69,7 +73,7 @@ export function retryBudgetFor(failure: FailureClass): number {
  */
 function signature(report: VerificationReport): string {
   return report.ran
-    .filter((run) => run.code !== 0)
+    .filter(verificationRunFailed)
     .map((run) => {
       const output = run.output.replace(/\s+/g, " ").trim().slice(0, SIGNATURE_CHARS);
       return `${run.command.join(" ")} :: ${output}`;

@@ -24,7 +24,11 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { type ExecutionBackend, hostExecutionBackend } from "./backend.js";
 import { type ExecResult, resolveCommandInvocation } from "./exec.js";
-import { classifyVerificationReport, recoveryDirective } from "./recovery.js";
+import {
+  classifyVerificationReport,
+  recoveryDirective,
+  verificationRunFailed,
+} from "./recovery.js";
 
 /**
  * A generous default: the point of this module is to run a project's real test
@@ -57,6 +61,35 @@ const MODEL_OUTPUT_BUDGET = 6_000;
  */
 const MIN_COMMAND_BUDGET = 800;
 
+/**
+ * Cap on the matched-line fragment quoted in the "exited 0, but the configured
+ * failure pattern matched" status. The fragment is a whole line of the retained
+ * output -- bounded only by `CAPTURE_CHARS` -- so quoting it verbatim would let
+ * a single long line hand the model several times `MODEL_OUTPUT_BUDGET` in one
+ * status line. The status only needs to name the match; the clipped body below
+ * it carries the detail.
+ */
+const ADAPTER_STATUS_CHARS = 200;
+
+/**
+ * A declarative, user-authored strictening of one command's verdict.
+ *
+ * An adapter can only fail an exit-0 run or reshape its failure evidence.
+ * There is deliberately no field that can convert a non-zero exit, timeout, or
+ * spawn failure into a pass: false success stays unreachable by construction.
+ * Patterns run in-process on already-bounded captured output -- no project
+ * code executes, and nothing model-written can author one (they live in
+ * forge.json, validated at load).
+ */
+export interface VerificationAdapter {
+  /** Matched to a configured command by exact token-array equality. */
+  readonly command: readonly string[];
+  /** An exit-0 run whose output has a line matching this pattern FAILS. */
+  readonly failWhen?: string | undefined;
+  /** Output lines matching this replace the head/tail clip in the model-facing body. */
+  readonly evidence?: string | undefined;
+}
+
 export interface VerificationConfig {
   /**
    * Token arrays, never shell strings. `["npm", "test"]`, not `"npm test"`:
@@ -78,6 +111,8 @@ export interface VerificationConfig {
    * first time. Defaults to 1, which is the historical single-run behaviour.
    */
   readonly confirmations?: number;
+  /** Applied to matching commands on every run, confirmations included. */
+  readonly adapters?: readonly VerificationAdapter[] | undefined;
 }
 
 export interface VerifyOptions {
@@ -99,6 +134,14 @@ export interface VerificationRun {
   readonly output: string;
   readonly seconds: number;
   readonly timedOut: boolean;
+  /**
+   * The first output line the matched adapter's `failWhen` flagged on an
+   * exit-0 run, `null` when no adapter objected. Optional so persisted runs
+   * from before adapters existed still satisfy the shape.
+   */
+  readonly adapterFailure?: string | null;
+  /** The matched adapter's `evidence` pattern, carried so the formatter can apply it. */
+  readonly evidencePattern?: string;
 }
 
 export interface VerificationReport {
@@ -144,30 +187,7 @@ export async function verify(
   const confirmations = Math.max(1, Math.trunc(config.confirmations ?? 1));
 
   for (const command of config.commands) {
-    let result: ExecResult;
-    try {
-      result = await executeVerificationCommand(command, options, timeoutSeconds);
-    } catch (error) {
-      // A binary that is not installed (`cargo` on a machine without Rust)
-      // rejects at spawn. That is a failed verification, not a crashed
-      // harness: the caller still needs a report to show, and `passed` has to
-      // stay false rather than the whole run dying with an exception.
-      result = {
-        code: null,
-        output: error instanceof Error ? error.message : String(error),
-        timedOut: false,
-        seconds: 0,
-      };
-    }
-    ran.push({
-      // Copied, so a later mutation of the caller's config cannot rewrite
-      // history in a report that has already been persisted.
-      command: [...command],
-      code: result.code,
-      output: result.output,
-      seconds: result.seconds,
-      timedOut: result.timedOut,
-    });
+    ran.push(await runCommandOnce(command, config, options, timeoutSeconds));
 
     // After cancellation the remaining commands would each spawn and be killed
     // on arrival, filling the report with failures that say nothing about the
@@ -178,7 +198,7 @@ export async function verify(
   // `every` on an empty array is true, which is the intended answer: with
   // nothing configured there is nothing to fail on. `configured` is what
   // stops that from being read as success.
-  const firstPassPassed = ran.every((run) => run.code === 0);
+  const firstPassPassed = !ran.some(verificationRunFailed);
   const configured = config.commands.length > 0;
 
   // Confirm only a pass, and only when there was something to pass. A failing
@@ -187,12 +207,86 @@ export async function verify(
   if (firstPassPassed && configured && confirmations > 1 && options.signal?.aborted !== true) {
     const repeats = await confirm(config, options, timeoutSeconds, confirmations - 1);
     ran.push(...repeats);
-    if (repeats.some((run) => run.code !== 0)) {
+    if (repeats.some(verificationRunFailed)) {
       return { ran, passed: false, configured, flaky: true };
     }
   }
 
   return { ran, passed: firstPassPassed, configured, flaky: false };
+}
+
+/**
+ * One execution of one command, adapter verdict included, so the first pass
+ * and every confirmation judge a run by exactly the same predicate.
+ */
+async function runCommandOnce(
+  command: readonly string[],
+  config: VerificationConfig,
+  options: VerifyOptions,
+  timeoutSeconds: number,
+): Promise<VerificationRun> {
+  let result: ExecResult;
+  try {
+    result = await executeVerificationCommand(command, options, timeoutSeconds);
+  } catch (error) {
+    // A binary that is not installed (`cargo` on a machine without Rust)
+    // rejects at spawn. That is a failed verification, not a crashed
+    // harness: the caller still needs a report to show, and `passed` has to
+    // stay false rather than the whole run dying with an exception.
+    result = {
+      code: null,
+      output: error instanceof Error ? error.message : String(error),
+      timedOut: false,
+      seconds: 0,
+    };
+  }
+  const adapter = adapterFor(config.adapters, command);
+  // `failWhen` is consulted only on a clean exit: it can make the gate
+  // stricter, never rescue a run that already failed.
+  const adapterFailure =
+    result.code === 0 && adapter?.failWhen !== undefined
+      ? firstLineMatching(result.output, adapter.failWhen)
+      : null;
+  return {
+    // Copied, so a later mutation of the caller's config cannot rewrite
+    // history in a report that has already been persisted.
+    command: [...command],
+    code: result.code,
+    output: result.output,
+    seconds: result.seconds,
+    timedOut: result.timedOut,
+    adapterFailure,
+    ...(adapter?.evidence === undefined ? {} : { evidencePattern: adapter.evidence }),
+  };
+}
+
+function adapterFor(
+  adapters: readonly VerificationAdapter[] | undefined,
+  command: readonly string[],
+): VerificationAdapter | null {
+  for (const adapter of adapters ?? []) {
+    if (
+      adapter.command.length === command.length &&
+      adapter.command.every((token, index) => token === command[index])
+    ) {
+      return adapter;
+    }
+  }
+  return null;
+}
+
+/**
+ * Patterns are line-scoped: user regexes never see the whole capture at once,
+ * which keeps a 32k-character output from feeding a pathological pattern more
+ * than one line of backtracking room. Invalid patterns throw -- forge.json
+ * validation rejects them before any run in the CLI path.
+ */
+function firstLineMatching(output: string, source: string): string | null {
+  const pattern = new RegExp(source);
+  for (const line of output.split("\n")) {
+    if (pattern.test(line)) return line;
+  }
+  return null;
 }
 
 /**
@@ -211,25 +305,9 @@ async function confirm(
   const runs: VerificationRun[] = [];
   for (let round = 0; round < rounds; round += 1) {
     for (const command of config.commands) {
-      let result: ExecResult;
-      try {
-        result = await executeVerificationCommand(command, options, timeoutSeconds);
-      } catch (error) {
-        result = {
-          code: null,
-          output: error instanceof Error ? error.message : String(error),
-          timedOut: false,
-          seconds: 0,
-        };
-      }
-      runs.push({
-        command: [...command],
-        code: result.code,
-        output: result.output,
-        seconds: result.seconds,
-        timedOut: result.timedOut,
-      });
-      if (result.code !== 0) return runs;
+      const run = await runCommandOnce(command, config, options, timeoutSeconds);
+      runs.push(run);
+      if (verificationRunFailed(run)) return runs;
       if (options.signal?.aborted === true) return runs;
     }
   }
@@ -277,7 +355,7 @@ export function formatForModel(report: VerificationReport): string {
   // told only "the tests failed" will hunt for a bug in code that is correct
   // and patch a symptom. What needs finding is the shared state.
   if (report.flaky) {
-    const failures = report.ran.filter((run) => run.code !== 0);
+    const failures = report.ran.filter(verificationRunFailed);
     const directive = recoveryDirective(classifyVerificationReport(report));
     return [
       "Verification is FLAKY: the suite passed and then failed on a re-run of the same commands.",
@@ -293,7 +371,7 @@ export function formatForModel(report: VerificationReport): string {
     ].join("\n");
   }
 
-  const failures = report.ran.filter((run) => run.code !== 0);
+  const failures = report.ran.filter(verificationRunFailed);
   if (failures.length === 0) {
     return `Verification passed: ${report.ran.map((run) => quote(run.command)).join(", ")}.`;
   }
@@ -314,10 +392,14 @@ export function formatForModel(report: VerificationReport): string {
     `Failure class${classes.length === 1 ? "" : "es"}: ${classes.join(", ")}.`,
   ];
   for (const run of detailed) {
+    // An adapter failure is named as a pattern match on a clean exit, so the
+    // model repairs the failing test instead of hunting for a crash.
     const status = run.timedOut
       ? `timed out after ${run.seconds.toFixed(1)}s`
-      : `exited ${run.code === null ? "abnormally" : String(run.code)} after ${run.seconds.toFixed(1)}s`;
-    const body = clip(run.output.trimEnd(), budget);
+      : (run.adapterFailure ?? null) !== null
+        ? `exited 0, but the configured failure pattern matched: ${clipLine(run.adapterFailure ?? "", ADAPTER_STATUS_CHARS)}`
+        : `exited ${run.code === null ? "abnormally" : String(run.code)} after ${run.seconds.toFixed(1)}s`;
+    const body = clip(evidenceBody(run) ?? run.output.trimEnd(), budget);
     lines.push("", `$ ${quote(run.command)}`, status, body === "" ? "(no output)" : body);
   }
   if (omittedCommands.length > 0) {
@@ -331,12 +413,24 @@ export function formatForModel(report: VerificationReport): string {
 
   // Naming what still passes stops a repair from trading one failure for
   // another: the model can see which commands its next edit must not break.
-  const survivors = report.ran.filter((run) => run.code === 0);
+  const survivors = report.ran.filter((run) => !verificationRunFailed(run));
   if (survivors.length > 0) {
     lines.push("", `Still passing: ${survivors.map((run) => quote(run.command)).join(", ")}.`);
   }
   if (directive !== null) lines.push("", directive);
   return lines.join("\n");
+}
+
+/**
+ * The adapter's evidence lines, or `null` to fall back to the head/tail clip.
+ * Applied at format time to the retained output, and still subject to the
+ * caller's per-command budget: evidence reshapes the body, never enlarges it.
+ */
+function evidenceBody(run: VerificationRun): string | null {
+  if (run.evidencePattern === undefined) return null;
+  const pattern = new RegExp(run.evidencePattern);
+  const lines = run.output.split("\n").filter((line) => pattern.test(line));
+  return lines.length === 0 ? null : lines.join("\n");
 }
 
 /**
@@ -436,6 +530,20 @@ function clip(text: string, limit: number): string {
   const tail = usable - head;
   const omitted = text.length - head - tail;
   return `${text.slice(0, head)}${marker(omitted)}${tail > 0 ? text.slice(-tail) : ""}`;
+}
+
+/**
+ * Truncation for text that must stay on one line. `clip()` keeps head and tail
+ * around a multi-line marker, which would break a status line in two; here the
+ * tail is expendable and the omission count says what was dropped. As in
+ * `clip`, the marker comes out of the limit, not on top of it.
+ */
+function clipLine(text: string, limit: number): string {
+  if (text.length <= limit) return text;
+  const marker = (count: number) => ` … ${count} characters omitted`;
+  const reserve = marker(text.length).length;
+  const head = Math.max(0, limit - reserve);
+  return `${text.slice(0, head)}${marker(text.length - head)}`;
 }
 
 /**

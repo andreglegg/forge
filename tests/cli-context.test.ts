@@ -169,6 +169,67 @@ describe("task context import following", () => {
   });
 });
 
+describe("project skill context", () => {
+  test("a matched skill is compiled into context and accounted for in the receipt", async () => {
+    const dir = realpathSync(await mkdtemp(path.join(tmpdir(), "context-skill-")));
+    try {
+      writeFileSync(path.join(dir, "service.ts"), "export const service = 1;\n");
+      mkdirSync(path.join(dir, ".forge", "skills"), { recursive: true });
+      writeFileSync(
+        path.join(dir, ".forge", "skills", "deploy.md"),
+        "---\nkeywords: [deploy]\n---\nRun the canary first, then promote.\n",
+      );
+
+      const result = await taskContext(new Workspace(dir), "deploy the service", 24_000);
+      const entry = result.receipt.items.find(
+        (item) => item.id === "skill:.forge/skills/deploy.md",
+      );
+
+      expect(entry?.included).toBe(true);
+      expect(entry?.reason).toBe("matched task keywords: deploy");
+      expect(entry?.chars).toBeGreaterThan(0);
+      expect(result.text).toContain("Run the canary first, then promote.");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("a skill is dropped before scoped instructions when the budget runs out", async () => {
+    const dir = realpathSync(await mkdtemp(path.join(tmpdir(), "context-skill-budget-")));
+    try {
+      writeFileSync(path.join(dir, "service.ts"), "export const service = 1;\n");
+      mkdirSync(path.join(dir, ".forge", "instructions"), { recursive: true });
+      writeFileSync(
+        path.join(dir, ".forge", "instructions", "deploy.md"),
+        "---\nkeywords: [deploy]\n---\nNever skip the smoke test.\n",
+      );
+      mkdirSync(path.join(dir, ".forge", "skills"), { recursive: true });
+      writeFileSync(
+        path.join(dir, ".forge", "skills", "deploy.md"),
+        `---\nkeywords: [deploy]\n---\n${"CANARY_SKILL_MARKER ".repeat(300)}\n`,
+      );
+
+      const result = await taskContext(new Workspace(dir), "deploy the service", 3_000);
+      const instruction = result.receipt.items.find(
+        (item) => item.id === "instruction:.forge/instructions/deploy.md",
+      );
+      const skill = result.receipt.items.find(
+        (item) => item.id === "skill:.forge/skills/deploy.md",
+      );
+
+      // Instructions outscore skills, so the budget evicts the skill first --
+      // and the receipt records the eviction instead of hiding it.
+      expect(instruction?.included).toBe(true);
+      expect(skill?.included).toBe(false);
+      expect(result.text).toContain("Never skip the smoke test.");
+      expect(result.text).not.toContain("CANARY_SKILL_MARKER");
+      expect(result.receipt.droppedChars).toBeGreaterThan(0);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("bounded run options", () => {
   test("steers consecutive edits toward executable feedback", () => {
     const cadence = new VerificationCadence();

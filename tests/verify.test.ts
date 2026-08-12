@@ -13,7 +13,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, test } from "vitest";
-import { detectCommands, formatForModel, verify } from "../src/verify.js";
+import { detectCommands, formatForModel, type VerificationAdapter, verify } from "../src/verify.js";
 
 /**
  * The interpreter running this suite, not whatever `node` resolves to. The
@@ -279,6 +279,200 @@ describe("verify", () => {
       expect(report.passed).toBe(false);
       expect(report.configured).toBe(true);
       expect(report.ran[0]?.code).toBeNull();
+    });
+  });
+});
+
+describe("verification adapters", () => {
+  test("an exit-0 run whose output matches failWhen fails with the first matching line", async () => {
+    await withDir(async (dir) => {
+      // The realistic subject: a runner that reports failures on stdout while
+      // exiting 0 -- a watch runner, some TAP emitters. The exit code alone
+      // would launder the failure into a pass.
+      const command = await scriptFile(
+        dir,
+        "green-exit.js",
+        [
+          "console.log('suite starting');",
+          "console.log('FAIL: expected 2 to equal 3');",
+          "console.log('FAIL: second failure');",
+          "process.exit(0);",
+        ].join("\n"),
+      );
+
+      const report = await verify(
+        { commands: [command], adapters: [{ command, failWhen: "^FAIL\\b" }] },
+        { cwd: dir },
+      );
+
+      expect(report.passed).toBe(false);
+      expect(report.configured).toBe(true);
+      expect(report.flaky).toBe(false);
+      expect(report.ran[0]?.code).toBe(0);
+      expect(report.ran[0]?.adapterFailure).toBe("FAIL: expected 2 to equal 3");
+
+      const text = formatForModel(report);
+      expect(text).toContain("Verification failed");
+      // Named as a pattern match on a clean exit, so the model repairs the
+      // failing test instead of hunting for a crash that never happened.
+      expect(text).toContain(
+        "exited 0, but the configured failure pattern matched: FAIL: expected 2 to equal 3",
+      );
+    });
+  });
+
+  test("a single long matched line cannot flood the status past the model budget", async () => {
+    await withDir(async (dir) => {
+      // The hostile shape: a runner that exits 0 and prints its whole failure
+      // report as one minified line. The matched line is bounded only by the
+      // 32k capture, so quoting it verbatim in the status would hand the model
+      // ~5x the entire output budget in a single line.
+      const command = await scriptFile(
+        dir,
+        "long-line.js",
+        "process.stdout.write('FAIL ' + 'A'.repeat(31000) + '\\n');\nprocess.exit(0);",
+      );
+
+      const report = await verify(
+        { commands: [command], adapters: [{ command, failWhen: "^FAIL\\b" }] },
+        { cwd: dir },
+      );
+      expect(report.passed).toBe(false);
+
+      const text = formatForModel(report);
+      expect(text).toContain("exited 0, but the configured failure pattern matched:");
+      // One failing command: the body is clipped to MODEL_OUTPUT_BUDGET (6000),
+      // and the status plus framing must not push materially past it.
+      expect(text.length).toBeLessThan(7_000);
+      const status = text.split("\n").find((line) => line.startsWith("exited 0,"));
+      expect(status).toBeDefined();
+      expect(status?.length ?? 0).toBeLessThan(300);
+      expect(status).toContain("characters omitted");
+    });
+  });
+
+  test("no adapter can convert a non-zero exit, timeout, or spawn failure into a pass", async () => {
+    await withDir(async (dir) => {
+      const failing = script("console.log('all good'); process.exit(1)");
+      const failingReport = await verify(
+        { commands: [failing], adapters: [{ command: failing, evidence: "good" }] },
+        { cwd: dir },
+      );
+      expect(failingReport.passed).toBe(false);
+
+      const hanging = script("setTimeout(() => {}, 60000)");
+      const timedOut = await verify(
+        {
+          commands: [hanging],
+          timeoutSeconds: 1,
+          adapters: [{ command: hanging, failWhen: "never", evidence: "never" }],
+        },
+        { cwd: dir },
+      );
+      expect(timedOut.passed).toBe(false);
+      expect(timedOut.ran[0]?.timedOut).toBe(true);
+
+      const absent = ["forge-harness-no-such-binary-xyz", "--version"];
+      const spawnReport = await verify(
+        { commands: [absent], adapters: [{ command: absent, failWhen: "anything" }] },
+        { cwd: dir },
+      );
+      expect(spawnReport.passed).toBe(false);
+      expect(spawnReport.ran[0]?.code).toBeNull();
+
+      // The vocabulary has no way to declare a pass: an adapter can only fail
+      // a run or reshape its evidence, never the reverse.
+      // @ts-expect-error -- no `passWhen` field exists by construction
+      const rejected: VerificationAdapter = { command: absent, passWhen: "ok" };
+      expect(rejected.command).toBe(absent);
+    });
+  });
+
+  test("evidence lines replace the head/tail clip as the model-facing failure body", async () => {
+    await withDir(async (dir) => {
+      const command = await scriptFile(
+        dir,
+        "tap.js",
+        [
+          "console.log('HEAD_NOISE');",
+          "for (let i = 0; i < 200; i++) console.log('x'.repeat(80));",
+          "console.log('not ok 7 - EVIDENCE_ALPHA');",
+          "console.log('not ok 9 - EVIDENCE_BETA');",
+          "console.log('TAIL_NOISE');",
+          "process.exit(1);",
+        ].join("\n"),
+      );
+
+      const report = await verify(
+        { commands: [command], adapters: [{ command, evidence: "^not ok " }] },
+        { cwd: dir },
+      );
+      expect(report.passed).toBe(false);
+
+      const text = formatForModel(report);
+      expect(text).toContain("EVIDENCE_ALPHA");
+      expect(text).toContain("EVIDENCE_BETA");
+      expect(text).not.toContain("HEAD_NOISE");
+      expect(text).not.toContain("TAIL_NOISE");
+    });
+  });
+
+  test("evidence is still clipped to the budget, and no match falls back to head/tail", async () => {
+    await withDir(async (dir) => {
+      const noisy = await scriptFile(
+        dir,
+        "noisy-evidence.js",
+        [
+          "for (let i = 0; i < 300; i++) console.log('not ok ' + i + ' ' + 'e'.repeat(60));",
+          "process.exit(1);",
+        ].join("\n"),
+      );
+      const clipped = await verify(
+        { commands: [noisy], adapters: [{ command: noisy, evidence: "^not ok " }] },
+        { cwd: dir },
+      );
+      const clippedText = formatForModel(clipped);
+      expect(clippedText).toContain("characters omitted");
+      expect(clippedText.length).toBeLessThan(9_000);
+
+      const plain = await scriptFile(
+        dir,
+        "plain.js",
+        "console.log('HEAD_MARKER');\nconsole.log('TAIL_MARKER');\nprocess.exit(1);\n",
+      );
+      const fallback = await verify(
+        { commands: [plain], adapters: [{ command: plain, evidence: "ZZZ_NEVER_MATCHES" }] },
+        { cwd: dir },
+      );
+      const fallbackText = formatForModel(fallback);
+      expect(fallbackText).toContain("HEAD_MARKER");
+      expect(fallbackText).toContain("TAIL_MARKER");
+    });
+  });
+
+  test("an adapter failure on a confirmation run is flaky and stops confirming early", async () => {
+    await withDir(async (dir) => {
+      const command = await scriptFile(
+        dir,
+        "flaky-adapter.cjs",
+        `const fs = require("fs"), path = require("path");
+         const marker = path.join(__dirname, "ran-once");
+         if (fs.existsSync(marker)) console.log("FAIL: second run");
+         else fs.writeFileSync(marker, "1");
+         process.exit(0);`,
+      );
+
+      const report = await verify(
+        { commands: [command], confirmations: 3, adapters: [{ command, failWhen: "^FAIL" }] },
+        { cwd: dir },
+      );
+
+      expect(report.flaky).toBe(true);
+      expect(report.passed).toBe(false);
+      // One clean pass, one contradicting confirmation, and no third run: the
+      // verdict was settled at the first disagreement.
+      expect(report.ran).toHaveLength(2);
+      expect(report.ran[1]?.adapterFailure).toBe("FAIL: second run");
     });
   });
 });

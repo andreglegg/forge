@@ -61,7 +61,7 @@ import {
   invokeExtensions,
 } from "./extension.js";
 import { formatHookFailure, type HookReport, runProjectHooks } from "./hooks.js";
-import { projectInstructionItems } from "./instructions.js";
+import { projectInstructionItems, projectSkillItems } from "./instructions.js";
 import {
   captureIsolatedPatch,
   createIsolatedWorktree,
@@ -540,6 +540,9 @@ export async function taskContext(
   items.push(...followed);
 
   const instructions = projectInstructionItems(workspace.root, task);
+  // At most one keyword-matched skill, scored below instructions: it competes
+  // for budget like everything else and its selection lands in the receipt.
+  const skills = projectSkillItems(workspace.root, task);
   const packet = taskPacket ? taskPacketItems(workspace, task) : [];
 
   const listingItem = {
@@ -550,7 +553,7 @@ export async function taskContext(
     score: 0,
     reason: "bounded complete repository map",
   };
-  return compile([listingItem, ...instructions, ...packet, ...items], budgetChars);
+  return compile([listingItem, ...instructions, ...skills, ...packet, ...items], budgetChars);
 }
 
 /** Known student-facing specification files hidden behind dot-directory listing rules. */
@@ -1951,8 +1954,10 @@ async function gate(
   // candidate promotion -- so an unconfirmed pass can launder a bad change
   // into an accepted one. Only the success path repeats, so the cost is one
   // extra suite run on the finish that was about to be accepted anyway.
+  // Adapters ride along validated: readProjectConfig already refused any
+  // pattern that does not compile and any adapter naming an unknown command.
   const report = await verify(
-    { commands, confirmations: VERIFY_CONFIRMATIONS },
+    { commands, confirmations: VERIFY_CONFIRMATIONS, adapters: project.verifyAdapters },
     { cwd: workspace.root, signal, backend },
   );
   run.verified(report.passed);

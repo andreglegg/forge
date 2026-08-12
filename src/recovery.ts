@@ -91,6 +91,16 @@ function matchesAny(text: string, patterns: readonly RegExp[]): boolean {
   return patterns.some((pattern) => pattern.test(text));
 }
 
+/**
+ * The one failure predicate every consumer of a run must share: a non-zero
+ * exit, or an exit-0 run a configured adapter failed. Lives here rather than
+ * in verify.ts because this module has no runtime dependency on it, so the
+ * import stays acyclic.
+ */
+export function verificationRunFailed(run: VerificationRun): boolean {
+  return run.code !== 0 || (run.adapterFailure ?? null) !== null;
+}
+
 export function classifyVerificationRun(run: VerificationRun): ClassifiedFailure {
   const output = run.output.trim();
   if (run.timedOut) {
@@ -145,15 +155,13 @@ export function classifyVerificationReport(
   report: VerificationReport,
 ): readonly ClassifiedFailure[] {
   if (report.flaky) {
-    return report.ran
-      .filter((run) => run.code !== 0)
-      .map((run) => ({
-        class: "flaky" as const,
-        command: run.command,
-        reason: "a previously passing command failed on confirmation",
-      }));
+    return report.ran.filter(verificationRunFailed).map((run) => ({
+      class: "flaky" as const,
+      command: run.command,
+      reason: "a previously passing command failed on confirmation",
+    }));
   }
-  return report.ran.filter((run) => run.code !== 0).map(classifyVerificationRun);
+  return report.ran.filter(verificationRunFailed).map(classifyVerificationRun);
 }
 
 export function recoveryDirective(failures: readonly ClassifiedFailure[]): string | null {
