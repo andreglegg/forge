@@ -28,7 +28,7 @@ This roadmap applies to the current TypeScript product. See `STATUS.md` for the 
 
 ## 0.3 integration surface
 
-- Versioned general extension API and interactive lifecycle hooks; headless repository-command hooks already ship.
+- Versioned general extension API and interactive lifecycle hooks: v1.0 ships with the `beforeCompletion` point (opt-in `--extensions`, fail-closed subprocess protocol, contract 1.3 audit events); remaining lifecycle points stay headless repository-command hooks.
 - MCP client support through Forge permissions, timeouts, output bounds, and audit events.
 - Small skill and verification-adapter API.
 - Stable stream protocol and server mode for IDEs and local automation.

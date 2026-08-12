@@ -63,6 +63,15 @@ Repository files, user instructions, generated model output, tool output, depend
 - Hooks receive only bounded Forge metadata through `FORGE_HOOK_EVENT`, `FORGE_SESSION_ID`, and optional `FORGE_VERIFIED`.
 - Hooks are still arbitrary repository-controlled programs. Enabling them has the same host-code-execution implications as approving a repository test command.
 
+### Versioned extensions (extension API 1.0)
+
+- Extension entries in `forge.json` never execute automatically. The user must add `--extensions` to a headless `forge run` invocation, and the manifest is snapshotted at session start, so a mid-run edit to `forge.json` (a file the model can write) cannot change the active extension set.
+- Extensions are subprocesses, never code loaded into the Forge process: token arrays, `shell: false`, the same scrubbed environment as every other command (no provider credentials), bounded output, and a group-killed timeout.
+- Each declared `api` is checked against the implemented extension API (1.0) before the provider is contacted; a mismatch is a hard error, never a silent skip.
+- The `beforeCompletion` request and result files live in a fresh OS temp directory outside the repository. An extension can accept, or reject with a bounded reason that reopens the run (at most 2 rejects per run, then the run fails with exit 1). Any protocol failure — timeout, nonzero exit, missing or malformed result — fails the run closed. An extension can tighten an outcome; it can never approve or loosen one.
+- Every crossing is journalled as `extension.invoked`/`extension.resolved` pairs under event contract 1.3.
+- Extensions are still arbitrary host programs with the same host-code-execution implications as hooks, and they run on the host even when a container backend is configured for commands.
+
 ### Verification
 
 - The model's success claim is not authoritative.
@@ -80,13 +89,14 @@ The current TypeScript product does not yet provide:
 - disk quotas (memory, CPU, and process-count bounds ship with the container backend; `--storage-opt` is storage-driver-specific and not portable across runtimes);
 - semantic aliases, inferred types, overload identity, references/callers, package exports, or TypeScript path-alias resolution;
 - complete dependency-confusion analysis or a guarantee that heuristic patch scanning finds every secret;
-- a third-party plugin or MCP permission boundary;
-- interactive lifecycle hooks or a versioned third-party hook API.
+- an MCP permission boundary;
+- container-backend execution of hook or extension subprocesses (both run on the host);
+- extension lifecycle points beyond `beforeCompletion` (the other lifecycle hooks remain exit-code-only).
 
 Do not run Forge with elevated privileges or use autonomous approval on an untrusted repository. Git-worktree isolation protects the user's selected checkout from unpromoted edits, but it does not isolate processes; on the default host backend it does not isolate the network, credentials available outside Forge's scrubbed command environment, or the host filesystem. A container backend addresses those for the commands it runs, and is opt-in.
 
 ## Production-hardening direction
 
-Optional container isolation has shipped with network off, a read-only root filesystem, and default memory (4096 MiB, swap pinned equal), CPU (2), and process-count (512) bounds; `/workspace` and a bounded `/tmp` tmpfs (which also carries `HOME`) stay writable. Two enforcement caveats: on cgroups-v1 rootless systems the runtime warns and ignores resource limits rather than failing, and on cgroups-v2 rootless systems without CPU delegation the runtime hard-errors — `execution.limits: false` / `--sandbox-no-limits` is the explicit escape hatch, which drops only the cgroup bounds, never the filesystem semantics, and is announced by the backend description. The next execution-backend work is covering the remaining host-executed paths and surfacing the backend state in machine-readable output. External tools, MCP servers, and plugins must pass through the same permission, timeout, output-bound, and audit-journal boundaries as built-in tools. The shipped headless hooks are repository commands, not yet a general extension API.
+Optional container isolation has shipped with network off, a read-only root filesystem, and default memory (4096 MiB, swap pinned equal), CPU (2), and process-count (512) bounds; `/workspace` and a bounded `/tmp` tmpfs (which also carries `HOME`) stay writable. Two enforcement caveats: on cgroups-v1 rootless systems the runtime warns and ignores resource limits rather than failing, and on cgroups-v2 rootless systems without CPU delegation the runtime hard-errors — `execution.limits: false` / `--sandbox-no-limits` is the explicit escape hatch, which drops only the cgroup bounds, never the filesystem semantics, and is announced by the backend description. The next execution-backend work is covering the remaining host-executed paths and surfacing the backend state in machine-readable output. External tools, MCP servers, and plugins must pass through the same permission, timeout, output-bound, and audit-journal boundaries as built-in tools. The shipped extension API (1.0, `beforeCompletion`) is that boundary's first versioned third-party crossing; headless hooks remain exit-code-only repository commands.
 
 Security reports should include a reproducible case and affected version. Do not include real credentials or private repository content.

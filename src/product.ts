@@ -29,6 +29,24 @@ const HooksSchema = z
   .strict();
 
 /**
+ * The extension manifest: name -> subscribed executable. Strict and versioned.
+ * `api` is the extension API the entry was written against, enforced at startup
+ * against EXTENSION_API_VERSION; `command` is a token array crossing the same
+ * shell-free subprocess boundary as every other command Forge runs.
+ */
+const ExtensionSchema = z
+  .object({
+    api: z.string().regex(/^\d+\.\d+$/, "api must be major.minor, for example 1.0"),
+    command: z.array(z.string().min(1)).min(1),
+    events: z.array(z.enum(["beforeCompletion"])).min(1),
+    timeoutSeconds: z.number().int().positive().max(600).optional(),
+    maxOutputChars: z.number().int().positive().max(1_000_000).optional(),
+  })
+  .strict();
+
+const ExtensionsSchema = z.record(z.string().min(1), ExtensionSchema);
+
+/**
  * Where commands run. Absent means the host, which is the historical behaviour
  * and stays the default: a container backend that turned itself on would break
  * every project whose toolchain is installed locally rather than in an image.
@@ -58,11 +76,13 @@ const ProjectConfigSchema = z
     profile: z.string().min(1).optional(),
     profiles: z.record(z.string().min(1), ModelProfileSchema).optional(),
     hooks: HooksSchema.optional(),
+    extensions: ExtensionsSchema.optional(),
   })
   .strict();
 
 export type ModelProfile = z.infer<typeof ModelProfileSchema>;
 export type ProjectHooks = z.infer<typeof HooksSchema>;
+export type ProjectExtensions = z.infer<typeof ExtensionsSchema>;
 export type ProjectConfig = z.infer<typeof ProjectConfigSchema>;
 
 export interface SelectedModelProfile {

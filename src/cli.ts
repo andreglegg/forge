@@ -54,6 +54,12 @@ import { type ContextItem, type ContextReceipt, compile, scoreFiles } from "./co
 import { contractHeader, EVENT_CONTRACT_VERSION } from "./contract.js";
 import { missingDeliverables, missingDeliverablesNotice } from "./deliverables.js";
 import { resolveCommandInvocation } from "./exec.js";
+import {
+  checkExtensionsApi,
+  EXTENSION_REJECT_LIMIT,
+  type ExtensionResolution,
+  invokeExtensions,
+} from "./extension.js";
 import { formatHookFailure, type HookReport, runProjectHooks } from "./hooks.js";
 import { projectInstructionItems } from "./instructions.js";
 import {
@@ -196,6 +202,7 @@ const USAGE = [
   "  --promote                apply a verified isolated patch to the original",
   "  --allow-risk             override critical patch-risk promotion blocks",
   "  --hooks                  enable repository hooks for headless runs",
+  "  --extensions             enable forge.json extensions for headless runs",
   "  --mode <mode>            workspace, read-only, or plan",
   "  --read-only              deny edits and command execution",
   "  --plan                   plan mode alias",
@@ -956,6 +963,11 @@ export async function main(
     io.err("--hooks is currently supported only by headless `forge run` and `forge plan`.");
     return 2;
   }
+  const extensionsEnabled = options["extensions"] === true;
+  if (extensionsEnabled && command !== "run") {
+    io.err("--extensions is currently supported only by headless `forge run`.");
+    return 2;
+  }
   const offline =
     command === "replay" ||
     command === "compare" ||
@@ -1195,6 +1207,15 @@ export async function main(
     } catch (error) {
       io.err(error instanceof Error ? error.message : String(error));
       return 2;
+    }
+    // Refused before the provider is contacted: an extension api this Forge
+    // does not implement is a hard configuration error, never a silent skip.
+    if (extensionsEnabled) {
+      const apiError = checkExtensionsApi(project.extensions);
+      if (apiError !== null) {
+        io.err(apiError);
+        return 2;
+      }
     }
     const provider = await probeProvider(config, { completion: true });
     if (!provider.ok) {
@@ -2040,6 +2061,12 @@ async function headless(
   const tracePath = traceFileFor(workspace.root, sessionId);
   const hooksEnabled = options["hooks"] === true;
   const hookReports: HookReport[] = [];
+  // The manifest was snapshotted when `project` was read at startup, so a
+  // mid-run edit to forge.json -- a file the model can write -- cannot change
+  // the active extension set.
+  const extensionsEnabled = options["extensions"] === true;
+  const extensionResolutions: ExtensionResolution[] = [];
+  let extensionRejects = 0;
   const collected: RunEvent[] = [];
   const drained = (async () => {
     for await (const event of run.events()) {
@@ -2163,6 +2190,68 @@ async function headless(
               )
             : { objection: null, report: null };
         if (outcome.objection === null) {
+          // The gate passed; subscribed extensions review the completion last.
+          // They can tighten the outcome -- reopen it or fail it -- but an
+          // accept is only the absence of an objection, never an approval.
+          if (extensionsEnabled && mode === "workspace") {
+            const snapshot = run.snapshot();
+            const report = await invokeExtensions(
+              project.extensions,
+              {
+                repository: workspace.root,
+                sessionId,
+                event: "beforeCompletion",
+                summary: snapshot.summary,
+                mutatedPaths: snapshot.committed.map((entry) => entry.path),
+                verification:
+                  outcome.report === null
+                    ? null
+                    : {
+                        passed: outcome.report.passed,
+                        commands: commands.map((entry) => entry.join(" ")),
+                      },
+                signal: controller.signal,
+              },
+              {
+                invoked: (invocation) => run.extensionInvoked(invocation),
+                resolved: (resolution) => {
+                  extensionResolutions.push(resolution);
+                  run.extensionResolved({
+                    name: resolution.name,
+                    event: resolution.event,
+                    decision: resolution.decision,
+                    reason: resolution.reason,
+                  });
+                },
+              },
+            );
+            if (report.failed !== null) {
+              // Fail closed: a protocol failure must never launder a
+              // completion into an accepted one. `code` stays 1.
+              run.fail(
+                `extension ${report.failed.name} failed to resolve beforeCompletion: ${report.failed.reason}`,
+              );
+              break;
+            }
+            if (report.rejected !== null) {
+              extensionRejects += 1;
+              if (extensionRejects > EXTENSION_REJECT_LIMIT) {
+                run.fail(
+                  `extension ${report.rejected.name} rejected the completion and the ${EXTENSION_REJECT_LIMIT}-reject budget is spent: ${report.rejected.reason}`,
+                );
+                break;
+              }
+              run.reopen(
+                `extension ${report.rejected.name} rejected the completion: ${report.rejected.reason}`,
+              );
+              messages.push({ role: "assistant", content: result.text });
+              messages.push({
+                role: "user",
+                content: `Extension ${report.rejected.name} reviewed the completion and rejected it:\n${report.rejected.reason}\nAddress the objection, then report completion again.`,
+              });
+              continue;
+            }
+          }
           code = 0;
           break;
         }
@@ -2254,6 +2343,14 @@ async function headless(
       enabled: hooksEnabled,
       ok: hookReports.every((report) => report.ok),
       reports: hookReports,
+    },
+    extensions: {
+      enabled: extensionsEnabled,
+      // Protocol health, not decision history: a reject that led to accepted
+      // rework is a working extension, a failed crossing is not.
+      ok: extensionResolutions.every((resolution) => resolution.decision !== "failed"),
+      rejects: extensionRejects,
+      resolutions: extensionResolutions,
     },
   };
   let finalCode = code;

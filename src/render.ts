@@ -221,6 +221,10 @@ export function renderHeadless(event: RunEvent): string | null {
       return `failed: ${event.reason}`;
     case "run.cancelled":
       return "cancelled";
+    case "extension.invoked":
+      return `extension ${event.name} ${event.event}`;
+    case "extension.resolved":
+      return `extension ${event.name} ${event.decision}${event.reason === "" ? "" : `: ${firstLine(event.reason)}`}`;
     default:
       return null;
   }

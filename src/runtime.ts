@@ -98,7 +98,27 @@ export type RunEvent =
    * turn about to start, which is how a client correlates the two. The report
    * is counters only -- it never carries evicted content.
    */
-  | { type: "context.compacted"; seq: number; turn: number; report: CompactionReport };
+  | { type: "context.compacted"; seq: number; turn: number; report: CompactionReport }
+  /**
+   * 1.3: extension audit. The pair brackets one subprocess crossing to a
+   * configured extension; `resolved` carries the decision that came back, or
+   * `failed` for a protocol failure that failed the crossing closed.
+   */
+  | {
+      type: "extension.invoked";
+      seq: number;
+      name: string;
+      event: string;
+      command: readonly string[];
+    }
+  | {
+      type: "extension.resolved";
+      seq: number;
+      name: string;
+      event: string;
+      decision: "accept" | "reject" | "failed";
+      reason: string;
+    };
 
 export type Decision = "once" | "always" | "deny";
 
@@ -941,6 +961,31 @@ export class Run {
    */
   recordCompaction(report: CompactionReport): void {
     this.emit({ type: "context.compacted", turn: this.state.turn + 1, report });
+  }
+
+  /** Audit an extension subprocess crossing; state no-ops, journal facts. */
+  extensionInvoked(invocation: { name: string; event: string; command: readonly string[] }): void {
+    this.emit({
+      type: "extension.invoked",
+      name: invocation.name,
+      event: invocation.event,
+      command: invocation.command,
+    });
+  }
+
+  extensionResolved(resolution: {
+    name: string;
+    event: string;
+    decision: "accept" | "reject" | "failed";
+    reason: string;
+  }): void {
+    this.emit({
+      type: "extension.resolved",
+      name: resolution.name,
+      event: resolution.event,
+      decision: resolution.decision,
+      reason: resolution.reason,
+    });
   }
 
   /** Announce verification through the event stream, in order with everything else. */

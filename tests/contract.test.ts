@@ -47,9 +47,16 @@ describe("the contract header", () => {
   test("names the serve request vocabulary that 1.2 added", () => {
     // Additive minor: the header gains `requests`, so a client can negotiate
     // what input the server accepts. Envelopes and events are unchanged.
-    expect(EVENT_CONTRACT_VERSION).toBe("1.2");
     expect(REQUEST_TYPES).toEqual(["run.start", "approve", "cancel", "shutdown"]);
     expect(ENVELOPE_TYPES).toEqual(["contract", "event", "result", "error"]);
+  });
+
+  test("names the extension audit that 1.3 added", () => {
+    // Additive minor: two new event types bracketing every extension
+    // subprocess crossing. Envelopes and requests are unchanged.
+    expect(EVENT_CONTRACT_VERSION).toBe("1.3");
+    expect(EVENT_TYPES).toContain("extension.invoked");
+    expect(EVENT_TYPES).toContain("extension.resolved");
   });
 });
 

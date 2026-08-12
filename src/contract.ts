@@ -25,7 +25,7 @@
 
 import { FORGE_VERSION } from "./version.js";
 
-export const EVENT_CONTRACT_VERSION = "1.2";
+export const EVENT_CONTRACT_VERSION = "1.3";
 
 /**
  * Every event type that can appear in the stream or a session journal.
@@ -53,6 +53,10 @@ export const EVENT_TYPES = [
   // 1.1: compaction telemetry. Emitted before its turn's `turn.started`,
   // because the transcript is bounded while the request is assembled.
   "context.compacted",
+  // 1.3: extension audit. Every subprocess crossing to a configured extension
+  // is journalled as an invoked/resolved pair.
+  "extension.invoked",
+  "extension.resolved",
 ] as const;
 
 /** The envelopes that carry those events on the wire. */
