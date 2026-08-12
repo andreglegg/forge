@@ -26,7 +26,7 @@ This table describes the executable TypeScript product in `src/`.
 | Read-only/plan permission modes | Shipped | Enforced by the Run actor before preview, approval, or execution; `--yes` cannot bypass them. |
 | Stream-JSON event protocol | Shipped | `--stream-json` emits durable Run events as JSONL followed by one result record. |
 | Disposable Git worktrees | Shipped (opt-in) | `forge run --isolate` requires a clean Git root, executes in a detached temporary worktree, retains a binary patch, and transfers session evidence. `--promote` applies only a verified, conflict-checked patch. |
-| Promotion risk scan | Shipped | Added patch lines are checked for likely secrets, install lifecycle scripts, dangerous workflows, and dependency metadata. Critical findings block promotion unless explicitly overridden with `--allow-risk`. |
+| Promotion risk scan | Shipped | Patch diffs are checked for likely secrets (provider prefixes plus high-entropy assigned tokens with lockfile/hash suppression), install- and prepare-family lifecycle scripts, dangerous workflows, dependency metadata, lookalike dependency substitutions, and non-registry or unpinned dependency sources. Critical findings block promotion unless explicitly overridden with `--allow-risk`. |
 | Headless lifecycle hooks | Shipped (opt-in) | `sessionStart`, `beforeVerify`, `afterVerify`, and `sessionEnd` token-array commands run only with `--hooks`; failures are authoritative and reported in machine output. |
 | Container/VM sandbox | Planned | No OS-level isolation today. |
 | MCP and plugin API | Planned | No third-party tool/extension boundary in the TypeScript core today. |

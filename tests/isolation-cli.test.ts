@@ -188,6 +188,103 @@ describe("isolated CLI runs", () => {
     expect(git(root, "status", "--porcelain=v1", "--untracked-files=all")).toBe("M note.txt");
   }, 30_000);
 
+  test("blocks a lookalike dependency substitution until explicitly overridden", async () => {
+    const manifestBefore = '{\n  "dependencies": {\n    "lodash": "^4.17.21"\n  }\n}\n';
+    const manifestAfter = manifestBefore.replace("lodash", "lodahs");
+    const repoChange: ScriptedChange = {
+      file: "package.json",
+      before: manifestBefore,
+      after: manifestAfter,
+    };
+    const editChange: ScriptedChange = {
+      file: "package.json",
+      before: '    "lodash": "^4.17.21"\n',
+      after: '    "lodahs": "^4.17.21"\n',
+    };
+    const root = await repository(repoChange);
+    cleanup.push(async () => rm(root, { recursive: true, force: true }));
+    const provider = await scriptedProvider(editChange);
+    cleanup.push(
+      async () =>
+        new Promise<void>((resolve, reject) =>
+          provider.server.close((error) => (error ? reject(error) : resolve())),
+        ),
+    );
+
+    const blocked = capturedIO();
+    const blockedCode = await main(
+      [
+        "run",
+        "Swap the lodash dependency.",
+        "--repo",
+        root,
+        "--url",
+        provider.url,
+        "--model",
+        "scripted",
+        "--yes",
+        "--isolate",
+        "--promote",
+        "--json",
+      ],
+      blocked.io,
+    );
+    const blockedResult = JSON.parse(blocked.out.join("\n")) as {
+      isolation: {
+        patch: string;
+        promoted: boolean;
+        risks: Array<{ severity: string; code: string }>;
+        riskOverride: boolean;
+        promotionBlocked: string | null;
+      };
+    };
+
+    expect(blockedCode).toBe(2);
+    expect(blocked.err).toEqual([]);
+    expect(readFileSync(path.join(root, "package.json"), "utf8")).toBe(manifestBefore);
+    expect(blockedResult.isolation).toMatchObject({
+      promoted: false,
+      riskOverride: false,
+      promotionBlocked: expect.stringMatching(/critical patch risk/i),
+      risks: expect.arrayContaining([
+        expect.objectContaining({ severity: "critical", code: "dependency_confusion" }),
+      ]),
+    });
+    expect(existsSync(path.join(root, blockedResult.isolation.patch))).toBe(true);
+
+    const overridden = capturedIO();
+    const overriddenCode = await main(
+      [
+        "run",
+        "Swap the lodash dependency.",
+        "--repo",
+        root,
+        "--url",
+        provider.url,
+        "--model",
+        "scripted",
+        "--yes",
+        "--isolate",
+        "--promote",
+        "--allow-risk",
+        "--json",
+      ],
+      overridden.io,
+    );
+    const overriddenResult = JSON.parse(overridden.out.join("\n")) as {
+      isolation: { promoted: boolean; riskOverride: boolean; promotionBlocked: string | null };
+    };
+
+    expect(overriddenCode).toBe(0);
+    expect(overridden.err).toEqual([]);
+    expect(overriddenResult.isolation).toMatchObject({
+      promoted: true,
+      riskOverride: true,
+      promotionBlocked: null,
+    });
+    expect(readFileSync(path.join(root, "package.json"), "utf8")).toBe(manifestAfter);
+  }, 30_000);
+
   test("blocks critical patch risks until explicitly overridden", async () => {
     const change: ScriptedChange = {
       file: "config.ts",

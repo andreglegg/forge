@@ -52,7 +52,7 @@ Repository files, user instructions, generated model output, tool output, depend
 - Tracked edits and non-ignored new files are captured as a binary-capable Git patch under `.forge/isolated/` in the original repository.
 - Without `--promote`, the original working tree is never changed.
 - `--promote` is incompatible with `--no-verify`. Promotion rechecks the original HEAD, requires the original tree to remain clean, runs `git apply --check`, and only then applies the patch.
-- Before promotion, added patch lines are scanned for likely credentials/private keys, package install lifecycle scripts, privileged/download-to-shell workflows, and dependency metadata changes. Critical findings retain the patch and block promotion unless the user explicitly supplies `--allow-risk` after review.
+- Before promotion, the patch is scanned offline and deterministically for likely credentials/private keys (including Slack/Stripe/Google/JWT prefixes and quoted or assigned high-entropy tokens, with lockfile/hash/minified-file suppression), npm install- and prepare-family lifecycle scripts, privileged/download-to-shell workflows, dependency metadata changes, lookalike dependency substitutions (an added `package.json` or `requirements*.txt` name within edit distance 1 of a removed one), and dependencies resolved from git/local/tarball/plain-http sources or unpinned `*`/`latest` specifiers. Critical findings retain the patch and block promotion unless the user explicitly supplies `--allow-risk` after review.
 - Session, trace, and retained-object evidence is copied back before the temporary worktree is removed.
 
 ### Explicit lifecycle hooks
