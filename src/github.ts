@@ -283,8 +283,21 @@ export async function publishPullRequest(
       return refuse(`git identity is not configured (${key}); set it before using --pr`);
     }
   }
+  // The unstage step is load-bearing: a repository on its first Forge run has
+  // no .forge/ gitignore entry, and `git add -A` alone would commit and
+  // publish the session journal and traces to origin. An exclusion pathspec
+  // cannot do this job -- when .forge/ *is* gitignored, git exits 1 with
+  // ignored-path advice for any explicit pathspec that reaches the directory.
   const staged = await recorded(["git", "add", "-A"], worktree.root, audit);
   if (!staged.ok) return refuse(`could not stage the isolated changes: ${detail(staged.output)}`);
+  const unstaged = await recorded(
+    ["git", "rm", "-r", "-q", "--cached", "--ignore-unmatch", ".forge"],
+    worktree.root,
+    audit,
+  );
+  if (!unstaged.ok) {
+    return refuse(`could not keep .forge out of the publication: ${detail(unstaged.output)}`);
+  }
   const committed = await recorded(["git", "commit", "-m", details.title], worktree.root, audit);
   if (!committed.ok) {
     return refuse(`could not commit the isolated changes: ${detail(committed.output)}`);
@@ -294,7 +307,8 @@ export async function publishPullRequest(
     return refuse("the repository has no `origin` remote; --pr publishes only to origin");
   }
   const existing = await recorded(
-    ["git", "ls-remote", "--heads", "origin", branch],
+    // Fully qualified so the pattern is exact, not a tail match.
+    ["git", "ls-remote", "origin", `refs/heads/${branch}`],
     worktree.root,
     audit,
   );
@@ -344,7 +358,7 @@ export async function publishPullRequest(
     const url =
       created.output
         .split("\n")
-        .map((line) => line.trim())
+        .map((line) => redactUrlCredentials(line.trim()))
         .find((line) => /^https:\/\/\S+$/.test(line)) ?? null;
     return { ok: true, branch, pushed: true, url, error: null, invocations: sanitized(audit) };
   } finally {

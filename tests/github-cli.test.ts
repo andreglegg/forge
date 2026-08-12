@@ -1,5 +1,12 @@
 import { execFileSync } from "node:child_process";
-import { chmodSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  writeFileSync,
+} from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
@@ -331,6 +338,37 @@ describe("publication refusals", () => {
     expect(result.invocations.some((entry) => entry.argv[1] === "push")).toBe(false);
     expect(result.invocations.flatMap((entry) => [...entry.argv])).not.toContain("--force");
     expect(bareBranches(bare)).toEqual(["refs/heads/forge/collision"]);
+  });
+
+  test("never publishes .forge run artifacts, even when the repository does not ignore them", async () => {
+    // Every other fixture gitignores .forge/, which is exactly how this class
+    // of leak hides: a repository on its first Forge run has no such entry.
+    const root = realpathSync(await mkdtemp(path.join(tmpdir(), "forge-github-noignore-")));
+    trackRepo(root);
+    git(root, "init");
+    git(root, "config", "user.email", "forge-tests@example.invalid");
+    git(root, "config", "user.name", "Forge Tests");
+    writeFileSync(path.join(root, "note.txt"), "old\n");
+    git(root, "add", "note.txt");
+    git(root, "commit", "-m", "initial");
+    const bare = bareOrigin(root);
+    cleanup.push(async () => rm(bare, { recursive: true, force: true }));
+    const worktree = await createIsolatedWorktree(root, "wt-noignore");
+    cleanup.push(async () => removeIsolatedWorktree(worktree).catch(() => undefined));
+    writeFileSync(path.join(worktree.root, "note.txt"), "changed\n");
+    mkdirSync(path.join(worktree.root, ".forge", "sessions"), { recursive: true });
+    writeFileSync(path.join(worktree.root, ".forge", "sessions", "leak.jsonl"), "{}\n");
+
+    const result = await publishPullRequest(worktree, {
+      sessionId: "noignore",
+      title: "forge ignore test",
+      body: "body",
+    });
+
+    expect(result.pushed).toBe(true);
+    const pushed = git(bare, "ls-tree", "-r", "--name-only", "refs/heads/forge/noignore");
+    expect(pushed).toContain("note.txt");
+    expect(pushed).not.toMatch(/\.forge\//);
   });
 
   test("never discloses credentials embedded in the origin URL", async () => {
