@@ -1025,9 +1025,13 @@ export class Run {
     const klass =
       proposal.kind === "edit"
         ? "edit"
-        : ["delete", "mkdir", "move", "copy", "rename"].includes(proposal.tool)
-          ? `filesystem:${proposal.tool}`
-          : `run:${proposal.tool}`;
+        : proposal.tool === "mcp"
+          ? // Scoped per external tool: "always" for one server:tool pair must
+            // not silently approve any other tool, even on the same server.
+            `mcp:${String(proposal.arguments["server"] ?? "")}:${String(proposal.arguments["tool"] ?? "")}`
+          : ["delete", "mkdir", "move", "copy", "rename"].includes(proposal.tool)
+            ? `filesystem:${proposal.tool}`
+            : `run:${proposal.tool}`;
     if (this.autoApprove || this.policy.allows(klass)) {
       return "once";
     }

@@ -71,6 +71,7 @@ import {
   removeIsolatedWorktree,
   transferIsolatedArtifacts,
 } from "./isolation.js";
+import { McpManager } from "./mcp.js";
 import { streamNative } from "./native.js";
 import {
   load as loadObject,
@@ -93,6 +94,8 @@ import {
 import {
   type ActionProposal,
   boundTurnIntent,
+  type McpToolSummary,
+  mcpToolListing,
   mutates,
   renderTurn,
   type TurnIntent,
@@ -203,6 +206,7 @@ const USAGE = [
   "  --allow-risk             override critical patch-risk promotion blocks",
   "  --hooks                  enable repository hooks for headless runs",
   "  --extensions             enable forge.json extensions for headless runs",
+  "  --mcp                    start forge.json MCP servers for a headless run",
   "  --mode <mode>            workspace, read-only, or plan",
   "  --read-only              deny edits and command execution",
   "  --plan                   plan mode alias",
@@ -309,14 +313,21 @@ export function systemPrompt(
   native = false,
   batchActions = false,
   mode: PermissionMode = "workspace",
+  mcpTools: readonly McpToolSummary[] | null = null,
 ): string {
   return [
     "You are a careful coding agent working inside a single repository.",
     "",
     // A model given native tools does not need the text protocol described, and
     // describing both invites it to mix them: half a tool call and half a
-    // SEARCH block decodes to neither.
-    ...(native ? [] : [textProtocolPrompt(), ""]),
+    // SEARCH block decodes to neither. The MCP tool listing appears only when
+    // servers are enabled for this run; native providers still need it because
+    // the discovered names are not part of the static tool schema.
+    ...(native
+      ? mcpTools === null
+        ? []
+        : [...mcpToolListing(mcpTools), ""]
+      : [textProtocolPrompt(mcpTools === null ? {} : { mcpTools }), ""]),
     "Rules:",
     "- Read a file before you edit it.",
     ...(batchActions
@@ -573,6 +584,7 @@ function makeTools(
   workspace: Workspace,
   signal?: AbortSignal,
   backend: ExecutionBackend = hostExecutionBackend,
+  mcp: McpManager | null = null,
 ) {
   return {
     // Keeps the bytes every edit replaced, so `forge undo` has something to
@@ -698,6 +710,26 @@ function makeTools(
           const status = result.code === 0 ? "exit 0" : `exit ${result.code}`;
           return { ok: result.code === 0, output: `${prefix}${status}\n${result.output}` };
         }
+        if (proposal.tool === "mcp") {
+          // Reached only after the approval gate, like `run`: the human saw
+          // the exact server, tool, and JSON arguments. The manager bounds how
+          // it executes -- per-call timeout, output clip, frozen tool set.
+          if (mcp === null) {
+            return {
+              ok: false,
+              output:
+                "MCP is not enabled for this run. Declare servers under mcp.servers in forge.json and start forge with --mcp.",
+            };
+          }
+          const nested = args["arguments"];
+          return await mcp.call(
+            String(args["server"] ?? ""),
+            String(args["tool"] ?? ""),
+            nested !== null && typeof nested === "object" && !Array.isArray(nested)
+              ? (nested as Record<string, unknown>)
+              : {},
+          );
+        }
         return {
           ok: false,
           output: `the ${String(proposal.tool)} tool is not available in this build`,
@@ -762,8 +794,9 @@ function makeRunEffects(
   signal: AbortSignal,
   mode: PermissionMode,
   backend: ExecutionBackend = hostExecutionBackend,
+  mcp: McpManager | null = null,
 ) {
-  const tools = makeTools(workspace, signal, backend);
+  const tools = makeTools(workspace, signal, backend, mcp);
   if (mode === "workspace") return { workspace, ...tools };
   const refusal = modeRefusal(mode);
   return {
@@ -966,6 +999,11 @@ export async function main(
   const extensionsEnabled = options["extensions"] === true;
   if (extensionsEnabled && command !== "run") {
     io.err("--extensions is currently supported only by headless `forge run`.");
+    return 2;
+  }
+  const mcpEnabled = options["mcp"] === true;
+  if (mcpEnabled && command !== "run") {
+    io.err("--mcp is currently supported only by headless `forge run`.");
     return 2;
   }
   const offline =
@@ -1183,6 +1221,9 @@ export async function main(
     options["native"] === true || (options["native"] === undefined && profile.native === true);
   const controller = new AbortController();
   process.once("SIGINT", () => controller.abort());
+  // Non-null only for `forge run --mcp`; every path out of the run shuts it
+  // down so no server process group outlives the run that started it.
+  let mcp: McpManager | null = null;
 
   const codingCommand =
     command === null ||
@@ -1217,6 +1258,20 @@ export async function main(
         return 2;
       }
     }
+    // Started and handshaken before the provider is contacted: a declared
+    // server that cannot start or initialize is a hard error, never a silent
+    // capability drop discovered mid-run.
+    if (mcpEnabled) {
+      mcp = new McpManager(project.mcp?.servers ?? {}, { cwd: root });
+      try {
+        await mcp.start();
+      } catch (error) {
+        mcp.shutdown();
+        io.err(error instanceof Error ? error.message : String(error));
+        return 2;
+      }
+      controller.signal.addEventListener("abort", () => mcp?.shutdown(), { once: true });
+    }
     const provider = await probeProvider(config, { completion: true });
     if (!provider.ok) {
       const message = `Provider preflight failed at ${config.baseUrl}: ${provider.error ?? "unhealthy endpoint"}`;
@@ -1229,6 +1284,7 @@ export async function main(
         if (command === "serve") io.out(JSON.stringify(contractHeader()));
         io.out(JSON.stringify({ type: "error", error: "provider_preflight", message, provider }));
       } else io.err(message);
+      mcp?.shutdown();
       return 2;
     }
     // An explicit --context or a profile always wins; this only fills the gap
@@ -1697,53 +1753,62 @@ export async function main(
     });
   }
   if (command === "run" || command === "plan") {
-    const task = rest.join(" ").trim();
-    if (!isolate) {
-      return await headless(
-        task,
-        workspace,
-        config,
-        controller,
-        options,
-        io,
-        native,
-        project,
-        mode,
-      );
-    }
-    let isolated: IsolatedWorktree;
     try {
-      isolated = await createIsolatedWorktree(root, newSessionId());
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      if (options["json"] === true) {
-        io.out(JSON.stringify({ ok: false, error: "isolation_setup", message }, null, 2));
-      } else if (options["stream-json"] === true) {
-        io.out(JSON.stringify({ type: "error", error: "isolation_setup", message }));
-      } else io.err(`Isolation setup failed: ${message}`);
-      return 2;
-    }
-    try {
-      return await headless(
-        task,
-        new Workspace(isolated.root),
-        config,
-        controller,
-        options,
-        io,
-        native,
-        project,
-        mode,
-        isolatedFinalizer(isolated, promote, allowRisk, options, io),
-      );
-    } catch (error) {
-      try {
-        await removeIsolatedWorktree(isolated);
-      } catch {
-        // The original exception is the causal failure. The worktree remains
-        // discoverable through Git if cleanup also failed.
+      const task = rest.join(" ").trim();
+      if (!isolate) {
+        return await headless(
+          task,
+          workspace,
+          config,
+          controller,
+          options,
+          io,
+          native,
+          project,
+          mode,
+          undefined,
+          undefined,
+          mcp,
+        );
       }
-      throw error;
+      let isolated: IsolatedWorktree;
+      try {
+        isolated = await createIsolatedWorktree(root, newSessionId());
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (options["json"] === true) {
+          io.out(JSON.stringify({ ok: false, error: "isolation_setup", message }, null, 2));
+        } else if (options["stream-json"] === true) {
+          io.out(JSON.stringify({ type: "error", error: "isolation_setup", message }));
+        } else io.err(`Isolation setup failed: ${message}`);
+        return 2;
+      }
+      try {
+        return await headless(
+          task,
+          new Workspace(isolated.root),
+          config,
+          controller,
+          options,
+          io,
+          native,
+          project,
+          mode,
+          isolatedFinalizer(isolated, promote, allowRisk, options, io),
+          undefined,
+          mcp,
+        );
+      } catch (error) {
+        try {
+          await removeIsolatedWorktree(isolated);
+        } catch {
+          // The original exception is the causal failure. The worktree remains
+          // discoverable through Git if cleanup also failed.
+        }
+        throw error;
+      }
+    } finally {
+      mcp?.shutdown();
     }
   }
   if (command === "continue" || command === "resume") {
@@ -2034,6 +2099,7 @@ async function headless(
   mode: PermissionMode,
   finalize?: HeadlessFinalizer,
   channel?: RunChannel,
+  mcp: McpManager | null = null,
 ): Promise<number> {
   if (!task) {
     io.err("forge run needs a task description.");
@@ -2047,7 +2113,7 @@ async function headless(
     return 2;
   }
   const run = new Run(
-    makeRunEffects(workspace, controller.signal, mode, backend),
+    makeRunEffects(workspace, controller.signal, mode, backend, mcp),
     options["yes"] === true,
   );
   channel?.attach(run);
@@ -2101,7 +2167,12 @@ async function headless(
   const messages: Message[] = [
     {
       role: "system",
-      content: systemPrompt(native, options["batch-actions"] === true, mode),
+      content: systemPrompt(
+        native,
+        options["batch-actions"] === true,
+        mode,
+        mcp === null ? null : mcp.tools(),
+      ),
     },
     { role: "user", content: `${context.text}\n\n${task}` },
   ];

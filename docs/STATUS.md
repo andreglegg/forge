@@ -31,7 +31,8 @@ This table describes the executable TypeScript product in `src/`.
 | Headless lifecycle hooks | Shipped (opt-in) | `sessionStart`, `beforeVerify`, `afterVerify`, and `sessionEnd` token-array commands run only with `--hooks`; failures are authoritative and reported in machine output. |
 | Versioned extension API | Shipped (opt-in, 1.0) | `forge.json` `extensions` entries run only with `--extensions` on headless `forge run`, from a startup-snapshotted manifest, as subprocesses through the same bounded shell-free executor. `beforeCompletion` extensions review the accepted completion and can reject it into a bounded reopen (2 per run) or fail it; every protocol failure fails closed, declared `api` is enforced before preflight, and each crossing is journalled as `extension.invoked`/`extension.resolved` under event contract 1.3. |
 | Container/VM sandbox | Planned | No OS-level isolation today. |
-| MCP and plugin API | Planned | No third-party tool/extension boundary in the TypeScript core today. |
+| MCP client (stdio) | Shipped (opt-in) | `forge.json` `mcp.servers` token-array stdio servers start only with `--mcp` on headless `forge run`; tools are discovered once at startup (32/server, 4 pages), each call is a mutating `mcp` proposal approved per `mcp:<server>:<tool>` class, bounded by per-call timeout and a head+tail output clip, and journalled through the ordinary action events on the unchanged contract. A declared server that cannot start or handshake fails the run before the provider is contacted. Non-stdio transports, resources/prompts, and server sandboxing remain out of scope. |
+| General plugin API | Planned | Third-party extension surface beyond `beforeCompletion` extensions and the stdio MCP client. |
 | Remote workers / IDE protocol | Planned | Expected to consume a future stable event/tool boundary. |
 | Full-screen TUI | Not planned for 0.1 | The scrollback-native terminal remains the primary interface. |
 

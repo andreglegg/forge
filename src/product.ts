@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
+import { McpConfigSchema } from "./mcp.js";
 import { detectCommands } from "./verify.js";
 
 export type PermissionMode = "workspace" | "read-only" | "plan";
@@ -77,6 +78,9 @@ const ProjectConfigSchema = z
     profiles: z.record(z.string().min(1), ModelProfileSchema).optional(),
     hooks: HooksSchema.optional(),
     extensions: ExtensionsSchema.optional(),
+    // Declared servers never start automatically: forge.json is a file the
+    // model can edit, so starting them stays behind the explicit --mcp flag.
+    mcp: McpConfigSchema.optional(),
   })
   .strict();
 

@@ -129,8 +129,10 @@ describe("the two codecs agree", () => {
 
   test("every registry tool appears in the generated prompt", () => {
     // Structural anti-drift: a tool the executor knows and the prompt does not
-    // is invisible to the model; the reverse is a guaranteed failed turn.
-    const prompt = textProtocolPrompt();
+    // is invisible to the model; the reverse is a guaranteed failed turn. The
+    // mcp directive is taught only when servers are enabled, so the check runs
+    // with them enabled; the disabled default is pinned in tests/mcp.test.ts.
+    const prompt = textProtocolPrompt({ mcpTools: [] });
     for (const tool of TOOLS) {
       if (tool.textForm !== undefined) {
         expect(prompt, tool.name).toContain(tool.textForm);

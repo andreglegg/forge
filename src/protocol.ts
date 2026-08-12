@@ -350,6 +350,25 @@ export const TOOLS: readonly ToolSpec[] = [
     describe: (a) => `run ${(a["command"] as string[]).join(" ")}`,
     textForm: "RUN <argv...>",
   },
+  {
+    // External MCP tools cross exactly the same proposal path as built-ins.
+    // One static spec rather than one per discovered tool: the registry cannot
+    // drift with server state, both codecs carry it by construction, and the
+    // approval class is derived per server:tool in the runtime. Always treated
+    // as mutating; server-side read-only hints are not trusted.
+    name: "mcp",
+    mutates: true,
+    schema: z.strictObject({
+      server: z.string().min(1),
+      tool: z.string().min(1),
+      arguments: z.record(z.string(), z.unknown()).default(() => ({})),
+    }),
+    // The approval prompt shows the exact JSON arguments; that visibility is
+    // the compensating control for arguments not being validated client-side.
+    describe: (a) =>
+      `call MCP tool ${String(a["server"])}:${String(a["tool"])} with ${JSON.stringify(a["arguments"] ?? {})}`,
+    textForm: "MCP <server> <tool> [<one-line JSON object of arguments>]",
+  },
 ];
 
 const BY_NAME = new Map(TOOLS.map((tool) => [tool.name, tool]));
@@ -377,6 +396,27 @@ export function describeProposal(proposal: ActionProposal): string {
 // Prompt surface, generated from the registry
 // ---------------------------------------------------------------------------
 
+/** One discovered external tool, as the prompt and the approval surface see it. */
+export interface McpToolSummary {
+  readonly server: string;
+  readonly tool: string;
+  readonly description: string;
+}
+
+/** The bounded discovered-tool listing shown only when MCP servers are enabled. */
+export function mcpToolListing(tools: readonly McpToolSummary[]): string[] {
+  if (tools.length === 0) {
+    return ["MCP servers are enabled but advertised no tools."];
+  }
+  return [
+    "External MCP tools, called with:  MCP <server> <tool> [<one-line JSON object of arguments>]",
+    ...tools.map(
+      (tool) =>
+        `  ${tool.server} ${tool.tool}${tool.description === "" ? "" : ` — ${tool.description.slice(0, 100)}`}`,
+    ),
+  ];
+}
+
 /**
  * The text protocol, written out for the model.
  *
@@ -384,11 +424,20 @@ export function describeProposal(proposal: ActionProposal): string {
  * automatically. A tool that exists in the executor but not in the prompt is
  * invisible; a tool in the prompt but not the executor is a guaranteed failed
  * turn. Generating both from one list makes either impossible.
+ *
+ * The one exception is `mcp`: its directive and the discovered-tool listing
+ * are taught only when servers are enabled for this run, because a directive
+ * with no server behind it is a guaranteed failed turn in the other direction.
  */
-export function textProtocolPrompt(): string {
+export function textProtocolPrompt(
+  options: { readonly mcpTools?: readonly McpToolSummary[] } = {},
+): string {
+  const mcpTools = options.mcpTools;
   const lines = [
     "Reply in plain text. Use these directives, one per line:",
-    ...TOOLS.filter((tool) => tool.textForm !== undefined).map((tool) => `  ${tool.textForm}`),
+    ...TOOLS.filter(
+      (tool) => tool.textForm !== undefined && (tool.name !== "mcp" || mcpTools !== undefined),
+    ).map((tool) => `  ${tool.textForm}`),
     "To change a file, write an edit block:",
     "  EDIT path/to/file.ts",
     "  <<<<<<< SEARCH",
@@ -407,6 +456,7 @@ export function textProtocolPrompt(): string {
     // caveats costs more than the edge case the caveats addressed.
     "The SEARCH text must appear exactly once. Quote the smallest text that",
     "does; add surrounding lines only if a shorter anchor would be ambiguous.",
+    ...(mcpTools === undefined ? [] : mcpToolListing(mcpTools)),
     "When the task is done, write:  DONE <one line summary>",
   ];
   return lines.join("\n");
@@ -456,6 +506,15 @@ export function renderProposal(proposal: ActionProposal): string {
     }
     if (proposal.tool === "glob") {
       return `GLOB ${String(args["pattern"] ?? "")}`;
+    }
+    if (proposal.tool === "mcp") {
+      const inner = args["arguments"];
+      const body =
+        inner !== null && typeof inner === "object" && !Array.isArray(inner)
+          ? (inner as Record<string, unknown>)
+          : {};
+      const suffix = Object.keys(body).length === 0 ? "" : ` ${JSON.stringify(body)}`;
+      return `MCP ${String(args["server"] ?? "")} ${String(args["tool"] ?? "")}${suffix}`;
     }
     if (["move", "copy", "rename"].includes(proposal.tool)) {
       return `${proposal.tool.toUpperCase()} ${String(args["source"] ?? "")} -> ${String(args["destination"] ?? "")}`;

@@ -254,6 +254,9 @@ export class TextCodec implements Codec {
     if (tool === undefined || tool.textForm === undefined) {
       return null;
     }
+    if (name === "mcp") {
+      return this.mcpDirective(rest);
+    }
     const args: Record<string, unknown> =
       name === "run"
         ? { command: splitArgv(rest) }
@@ -279,6 +282,49 @@ export class TextCodec implements Codec {
       return null;
     }
     return { kind: "call", tool: name, arguments: parsed.data };
+  }
+
+  /**
+   * `MCP <server> <tool> [<one-line JSON object>]`.
+   *
+   * The arguments are the one place this codec accepts JSON, because external
+   * tool arguments have no fixed shape to spell line-wise. Malformed or
+   * oversized JSON is a refused proposal with a repair note, never a guess:
+   * a guessed argument object would sail through approval looking deliberate.
+   */
+  private mcpDirective(rest: string): ActionProposal | null {
+    const match = /^(\S+)\s+(\S+)\s*(.*)$/.exec(rest);
+    if (match === null) {
+      this.repairs.add("bad_directive:mcp");
+      return null;
+    }
+    const [, server, tool, tail] = match;
+    let inner: Record<string, unknown> = {};
+    const body = (tail ?? "").trim();
+    if (body !== "") {
+      if (body.length > 4000) {
+        this.repairs.add("oversized_mcp_arguments");
+        return null;
+      }
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(body);
+      } catch {
+        this.repairs.add("bad_mcp_arguments");
+        return null;
+      }
+      if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+        this.repairs.add("bad_mcp_arguments");
+        return null;
+      }
+      inner = parsed as Record<string, unknown>;
+    }
+    const checked = toolNamed("mcp")?.schema.safeParse({ server, tool, arguments: inner });
+    if (checked === undefined || !checked.success) {
+      this.repairs.add("bad_directive:mcp");
+      return null;
+    }
+    return { kind: "call", tool: "mcp", arguments: checked.data };
   }
 
   /** Nested marker depth inside the current block. See `line`. */
