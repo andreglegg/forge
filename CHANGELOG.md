@@ -8,6 +8,7 @@ All notable product changes are recorded here. Forge follows semantic versioning
 
 - Bounded retry budgets for a failing completion gate, with per-failure-class limits and a no-progress stop when a failure repeats unchanged. A stopped run is always a failed run.
 - Optional container execution backends (`--sandbox docker|podman`, `--image`, `--sandbox-network`, or an `execution` block in `forge.json`) for model commands and verification: repository-only mount, network off by default, no host path environment.
+- Container resource bounds and a read-only root: sandboxed commands default to 4096 MiB memory (swap pinned equal), 2 CPUs, and 512 processes, with a read-only root filesystem beside a writable `/workspace` and a bounded `/tmp` tmpfs that also carries `HOME`, fixing dependency-cache writes under Docker's user mapping. Overridable per project (`execution.memoryMiB`/`cpus`/`pids`/`tmpfsMiB`/`readOnlyRoot`/`limits`) and per run (`--sandbox-memory`, `--sandbox-cpus`, `--sandbox-pids`, `--sandbox-writable-root`, `--sandbox-no-limits`); flags win so an operator can contain a run without editing a file the model can edit. An image name that would parse as a runtime option, and a tmpfs larger than the memory bound, are rejected by name.
 - Versioned event contract: a `contract` first line on `--stream-json`, a `contract` field in the `--json` result, and a `forge contract` command.
 
 ### Fixed

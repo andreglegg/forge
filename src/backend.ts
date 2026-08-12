@@ -28,6 +28,22 @@ export interface BackendSettings {
   readonly image: string;
   /** Off by default: an isolated command that can still reach the network is barely isolated. */
   readonly network: boolean;
+  /** Memory bound in MiB; swap is always pinned equal, so it cannot undo the bound. */
+  readonly memoryMiB: number;
+  /** CPU bound; fractional values are valid runtime input. */
+  readonly cpus: number;
+  /** Process-count bound; the fork-bomb stop, and the most portably enforced of the set. */
+  readonly pids: number;
+  /** Size of the writable /tmp; its pages are charged against `memoryMiB`. */
+  readonly tmpfsMiB: number;
+  /** Root filesystem read-only; /workspace and /tmp stay writable. */
+  readonly readOnlyRoot: boolean;
+  /**
+   * The one escape hatch for runtimes that cannot enforce cgroup limits
+   * (rootless without cpu delegation hard-errors). Disabling drops only the
+   * three resource bounds -- never the filesystem semantics.
+   */
+  readonly limits: boolean;
 }
 
 export interface ExecutionBackend {
@@ -52,6 +68,12 @@ const CONTAINER_ENV: Readonly<Record<string, string>> = {
   NO_COLOR: "1",
   GIT_PAGER: "cat",
   PYTHONDONTWRITEBYTECODE: "1",
+  // A container path, not a host path. Docker's --user runs a numeric uid with
+  // no passwd entry, which gets HOME=/ -- unwritable even before the read-only
+  // root -- so npm, cargo, go, and pip cache writes all need a HOME that lives
+  // on the tmpfs. Each run gets a cold cache, which is what a verification
+  // gate wants. Caller extraEnv is appended later and still wins.
+  HOME: "/tmp",
 };
 
 const LOCALE_KEYS = ["LANG", "LC_ALL", "TZ"] as const;
@@ -98,6 +120,25 @@ export function containerInvocation(
   if (settings.runtime === "docker" && typeof process.getuid === "function") {
     argv.push("--user", `${process.getuid()}:${process.getgid?.() ?? process.getuid()}`);
   }
+  if (settings.limits) {
+    argv.push(
+      "--memory",
+      `${settings.memoryMiB}m`,
+      // Always equal to --memory: extra swap would let a runaway exceed the
+      // bound by paging. An internal invariant, not a configuration field.
+      "--memory-swap",
+      `${settings.memoryMiB}m`,
+      "--cpus",
+      String(settings.cpus),
+      "--pids-limit",
+      String(settings.pids),
+    );
+  }
+  if (settings.readOnlyRoot) argv.push("--read-only");
+  // Explicit for both runtimes: podman's --read-only would otherwise mount an
+  // *unbounded* tmpfs on /tmp while docker would leave it read-only, and
+  // mode=1777 keeps it writable by docker's --user uid.
+  argv.push("--tmpfs", `/tmp:rw,size=${settings.tmpfsMiB}m,mode=1777`);
   argv.push("--volume", `${root}:${MOUNT}`, "--workdir", workdir);
   for (const [key, value] of Object.entries(CONTAINER_ENV)) argv.push("--env", `${key}=${value}`);
   for (const key of LOCALE_KEYS) {
@@ -162,6 +203,12 @@ export interface ExecutionSettingsInput {
   readonly runtime?: ExecutionRuntime | undefined;
   readonly image?: string | undefined;
   readonly network?: boolean | undefined;
+  readonly memoryMiB?: number | undefined;
+  readonly cpus?: number | undefined;
+  readonly pids?: number | undefined;
+  readonly tmpfsMiB?: number | undefined;
+  readonly readOnlyRoot?: boolean | undefined;
+  readonly limits?: boolean | undefined;
 }
 
 /**
@@ -179,11 +226,51 @@ export function resolveExecutionBackend(
       `execution runtime ${runtime} needs an image; set execution.image in forge.json`,
     );
   }
-  return containerBackend({ runtime, image, network: input?.network ?? false });
+  // The image is the one non-numeric value in option position. A name that
+  // starts with a dash would be read by the runtime as an option -- e.g.
+  // `--privileged=true` -- turning a config field into a flag injection.
+  if (image.startsWith("-")) {
+    throw new Error(`execution image may not start with "-": ${image}`);
+  }
+  const memoryMiB = input?.memoryMiB ?? 4096;
+  const tmpfsMiB = input?.tmpfsMiB ?? 1024;
+  const limits = input?.limits ?? true;
+  // tmpfs pages are charged to the memory cgroup, so a /tmp bigger than the
+  // memory bound OOM-kills writers before /tmp fills -- a confusing symptom
+  // better rejected here by name.
+  if (limits && tmpfsMiB > memoryMiB) {
+    throw new Error(
+      `execution tmpfsMiB (${tmpfsMiB}) may not exceed memoryMiB (${memoryMiB}) while limits are on`,
+    );
+  }
+  return containerBackend({
+    runtime,
+    image,
+    network: input?.network ?? false,
+    // Bounds a verification workload -- compilers and test runners, not
+    // services. 4 GiB clears real cargo/tsc/jest runs while stopping a
+    // runaway; 512 pids leaves headroom for per-crate rustc and jest workers.
+    memoryMiB,
+    cpus: input?.cpus ?? 2,
+    pids: input?.pids ?? 512,
+    tmpfsMiB,
+    readOnlyRoot: input?.readOnlyRoot ?? true,
+    limits,
+  });
 }
 
 export function describeBackend(backend: ExecutionBackend): string {
   const settings = backend.settings;
   if (settings === null) return "host (commands run directly on this machine)";
-  return `${settings.runtime} · ${settings.image} · ${settings.network ? "network" : "no network"}`;
+  const bounds = settings.limits
+    ? `${settings.memoryMiB} MiB · ${settings.cpus} cpus · ${settings.pids} pids`
+    : "NO RESOURCE LIMITS";
+  const rootState = settings.readOnlyRoot ? "read-only root" : "writable root";
+  return [
+    settings.runtime,
+    settings.image,
+    settings.network ? "network" : "no network",
+    rootState,
+    bounds,
+  ].join(" · ");
 }

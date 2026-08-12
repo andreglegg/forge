@@ -199,6 +199,11 @@ const USAGE = [
   "  --sandbox <runtime>      run commands in host, docker, or podman",
   "  --image <image>          container image for a sandboxed runtime",
   "  --sandbox-network        allow network from the sandbox (off by default)",
+  "  --sandbox-memory <MiB>   sandbox memory bound (default 4096)",
+  "  --sandbox-cpus <n>       sandbox cpu bound (default 2)",
+  "  --sandbox-pids <n>       sandbox process-count bound (default 512)",
+  "  --sandbox-writable-root  give up the read-only container root",
+  "  --sandbox-no-limits      drop resource bounds for runtimes that reject them",
   "  --native                 use the provider's tool-calling instead of the text protocol",
   "  --json                   one final machine-readable document",
   "  --stream-json            JSONL durable events plus one final result",
@@ -701,8 +706,11 @@ function makeTools(
  * named without an image -- and the caller reports that rather than silently
  * falling back to the host, because a silent fallback would run unsandboxed
  * exactly when someone asked for a sandbox.
+ *
+ * Exported for tests: the flag/config precedence is a security property, and
+ * asserting it needs the function, not a full CLI run.
  */
-function executionBackendFor(
+export function executionBackendFor(
   project: ProjectConfig,
   options: Readonly<Record<string, string | boolean>>,
 ): ExecutionBackend {
@@ -715,10 +723,26 @@ function executionBackendFor(
     throw new Error(`unknown execution runtime: ${runtime}; use host, docker, or podman`);
   }
   const image = typeof options["image"] === "string" ? options["image"] : project.execution?.image;
+  const bound = (name: string, integer: boolean): number | undefined => {
+    const raw = options[name];
+    if (raw === undefined) return undefined;
+    const value = typeof raw === "string" ? Number(raw) : Number.NaN;
+    if (!Number.isFinite(value) || value <= 0 || (integer && !Number.isInteger(value))) {
+      throw new Error(`--${name} needs a positive ${integer ? "integer" : "number"}`);
+    }
+    return value;
+  };
   return resolveExecutionBackend({
     runtime,
     image,
     network: options["sandbox-network"] === true || project.execution?.network === true,
+    memoryMiB: bound("sandbox-memory", true) ?? project.execution?.memoryMiB,
+    cpus: bound("sandbox-cpus", false) ?? project.execution?.cpus,
+    pids: bound("sandbox-pids", true) ?? project.execution?.pids,
+    tmpfsMiB: project.execution?.tmpfsMiB,
+    readOnlyRoot:
+      options["sandbox-writable-root"] === true ? false : project.execution?.readOnlyRoot,
+    limits: options["sandbox-no-limits"] === true ? false : project.execution?.limits,
   });
 }
 

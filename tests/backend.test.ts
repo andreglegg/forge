@@ -43,7 +43,18 @@ afterEach(async () => {
 });
 
 function settings(overrides: Partial<BackendSettings> = {}): BackendSettings {
-  return { runtime: "docker", image: "node:22", network: false, ...overrides };
+  return {
+    runtime: "docker",
+    image: "node:22",
+    network: false,
+    memoryMiB: 4096,
+    cpus: 2,
+    pids: 512,
+    tmpfsMiB: 1024,
+    readOnlyRoot: true,
+    limits: true,
+    ...overrides,
+  };
 }
 
 function argvFor(overrides: Partial<BackendSettings> = {}, cwd = ROOT): readonly string[] {
@@ -118,10 +129,14 @@ describe("container invocation", () => {
     const forwarded = argv
       .filter((_, index) => argv[index - 1] === "--env")
       .map((entry) => entry.split("=")[0]);
-    for (const hostPath of ["PATH", "HOME", "TMPDIR", "SHELL", "USER", "JAVA_HOME"]) {
+    for (const hostPath of ["PATH", "TMPDIR", "SHELL", "USER", "JAVA_HOME"]) {
       expect(forwarded).not.toContain(hostPath);
     }
     expect(forwarded).toContain("NO_COLOR");
+    // HOME crosses the boundary deliberately, but only as a fixed container
+    // path inside the tmpfs -- never the host's value.
+    expect(argv).toContain("HOME=/tmp");
+    if (process.env["HOME"]) expect(argv).not.toContain(`HOME=${process.env["HOME"]}`);
   });
 
   test("forwards caller-supplied variables but never the ambient environment", () => {
@@ -147,6 +162,68 @@ describe("container invocation", () => {
   });
 });
 
+describe("container resource bounds", () => {
+  test("bounds memory, swap, cpus, and processes", () => {
+    const argv = argvFor();
+    expect(valueAfter(argv, "--memory")).toBe("4096m");
+    expect(valueAfter(argv, "--memory-swap")).toBe("4096m");
+    expect(valueAfter(argv, "--cpus")).toBe("2");
+    expect(valueAfter(argv, "--pids-limit")).toBe("512");
+  });
+
+  test("swap bound always equals the memory bound", () => {
+    const argv = argvFor({ memoryMiB: 8192 });
+    expect(valueAfter(argv, "--memory")).toBe("8192m");
+    expect(valueAfter(argv, "--memory-swap")).toBe("8192m");
+  });
+
+  test("mounts a bounded world-writable tmpfs at /tmp", () => {
+    expect(valueAfter(argvFor(), "--tmpfs")).toBe("/tmp:rw,size=1024m,mode=1777");
+    expect(valueAfter(argvFor({ tmpfsMiB: 512 }), "--tmpfs")).toBe("/tmp:rw,size=512m,mode=1777");
+  });
+
+  test("makes the root filesystem read-only unless opted out", () => {
+    expect(argvFor()).toContain("--read-only");
+    const writable = argvFor({ readOnlyRoot: false });
+    expect(writable).not.toContain("--read-only");
+    // Opting out of the read-only root does not lose the bounded /tmp.
+    expect(valueAfter(writable, "--tmpfs")).toBe("/tmp:rw,size=1024m,mode=1777");
+  });
+
+  test("disabling limits omits exactly the three resource bounds and nothing else", () => {
+    const argv = argvFor({ limits: false });
+    for (const flag of ["--memory", "--memory-swap", "--cpus", "--pids-limit"]) {
+      expect(argv).not.toContain(flag);
+    }
+    expect(argv).toContain("--read-only");
+    expect(valueAfter(argv, "--tmpfs")).toBe("/tmp:rw,size=1024m,mode=1777");
+    expect(valueAfter(argv, "--network")).toBe("none");
+  });
+
+  test("a caller-supplied HOME lands after the fixed one, so it wins at runtime", () => {
+    const invocation = containerInvocation(
+      ["npm", "test"],
+      { cwd: ROOT, root: ROOT, extraEnv: { HOME: "/workspace/.home" } },
+      settings(),
+    );
+    if (!invocation.ok) throw new Error(invocation.output);
+    const fixed = invocation.command.indexOf("HOME=/tmp");
+    const supplied = invocation.command.indexOf("HOME=/workspace/.home");
+    expect(fixed).toBeGreaterThan(-1);
+    expect(supplied).toBeGreaterThan(fixed);
+  });
+
+  test("every bound precedes the image so the command stays positional", () => {
+    const argv = argvFor();
+    const image = argv.indexOf("node:22");
+    expect(image).toBe(argv.length - 3);
+    for (const flag of ["--memory", "--memory-swap", "--cpus", "--pids-limit", "--read-only"]) {
+      expect(argv.indexOf(flag)).toBeGreaterThan(-1);
+      expect(argv.indexOf(flag)).toBeLessThan(image);
+    }
+  });
+});
+
 describe("backend resolution", () => {
   test("defaults to the host, unchanged", () => {
     const backend = resolveExecutionBackend(undefined);
@@ -163,6 +240,51 @@ describe("backend resolution", () => {
     expect(backend.name).toBe("podman");
     expect(describeBackend(backend)).toContain("python:3.12");
     expect(describeBackend(backend)).toContain("no network");
+  });
+
+  test("applies safe resource bounds by default", () => {
+    const backend = resolveExecutionBackend({ runtime: "docker", image: "node:22" });
+    expect(backend.settings).toMatchObject({
+      memoryMiB: 4096,
+      cpus: 2,
+      pids: 512,
+      tmpfsMiB: 1024,
+      readOnlyRoot: true,
+      limits: true,
+    });
+  });
+
+  test("execution settings override the default bounds", () => {
+    const backend = resolveExecutionBackend({
+      runtime: "docker",
+      image: "node:22",
+      memoryMiB: 2048,
+      cpus: 4,
+      pids: 128,
+      tmpfsMiB: 256,
+      readOnlyRoot: false,
+      limits: false,
+    });
+    expect(backend.settings).toMatchObject({
+      memoryMiB: 2048,
+      cpus: 4,
+      pids: 128,
+      tmpfsMiB: 256,
+      readOnlyRoot: false,
+      limits: false,
+    });
+  });
+
+  test("describes the bounds, and says loudly when limits are off", () => {
+    const bounded = resolveExecutionBackend({ runtime: "docker", image: "node:22" });
+    expect(describeBackend(bounded)).toMatch(/read-only root/);
+    expect(describeBackend(bounded)).toMatch(/4096 MiB/);
+    const unbounded = resolveExecutionBackend({
+      runtime: "docker",
+      image: "node:22",
+      limits: false,
+    });
+    expect(describeBackend(unbounded)).toMatch(/no resource limits/i);
   });
 
   test("verification still runs on the host by default", async () => {
@@ -223,5 +345,42 @@ describe.skipIf(CONTAINER_RUNTIME === undefined)("a real container", () => {
     });
 
     expect(result.code).not.toBe(0);
+  }, 300_000);
+
+  test("enforces the read-only root while /workspace, /tmp, and HOME stay writable", async () => {
+    const root = realpathSync(await mkdtemp(path.join(tmpdir(), "forge-container-ro-")));
+    cleanup.push(async () => rm(root, { recursive: true, force: true }));
+    writeFileSync(
+      path.join(root, "guard.sh"),
+      [
+        "#!/bin/sh",
+        "touch /etc/forge-marker 2>/dev/null && exit 1",
+        "touch /tmp/ok || exit 2",
+        "touch /workspace/ok || exit 3",
+        'mkdir -p "$HOME/.cache" || exit 4',
+        "exit 0",
+      ].join("\n"),
+    );
+
+    const backend = resolveExecutionBackend({ runtime, image: "alpine:3" });
+    const result = await backend.run(["sh", "guard.sh"], { cwd: root, root, timeoutSeconds: 120 });
+
+    expect(result.code).toBe(0);
+  }, 300_000);
+
+  test("caps the container's process count", async () => {
+    const root = realpathSync(await mkdtemp(path.join(tmpdir(), "forge-container-pids-")));
+    cleanup.push(async () => rm(root, { recursive: true, force: true }));
+
+    const backend = resolveExecutionBackend({ runtime, image: "alpine:3" });
+    const result = await backend.run(["cat", "/sys/fs/cgroup/pids.max"], {
+      cwd: root,
+      root,
+      timeoutSeconds: 120,
+    });
+
+    expect(result.code).toBe(0);
+    // Merged output may carry runtime warnings; the readback is its own line.
+    expect(result.output).toMatch(/^512$/m);
   }, 300_000);
 });

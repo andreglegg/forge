@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, test } from "vitest";
-import { type IO, main } from "../src/cli.js";
+import { executionBackendFor, type IO, main } from "../src/cli.js";
 import {
   initializeProject,
   modeRefusal,
@@ -250,6 +250,120 @@ describe("project configuration", () => {
       expect(result.errors.join("\n")).toMatch(/invalid forge\.json/i);
       expect(() => initializeProject(root)).toThrow(/invalid forge\.json/i);
     });
+  });
+
+  test("accepts well-formed execution bounds and rejects malformed ones by field name", async () => {
+    await withRepo(async (root) => {
+      writeFileSync(
+        path.join(root, "forge.json"),
+        JSON.stringify({
+          execution: {
+            runtime: "docker",
+            image: "node:22",
+            memoryMiB: 2048,
+            cpus: 1.5,
+            pids: 256,
+            tmpfsMiB: 512,
+            readOnlyRoot: false,
+            limits: true,
+          },
+        }),
+      );
+      expect(readProjectConfig(root).errors).toEqual([]);
+
+      writeFileSync(
+        path.join(root, "forge.json"),
+        JSON.stringify({ execution: { runtime: "docker", image: "node:22", memoryMiB: "2g" } }),
+      );
+      expect(readProjectConfig(root).errors.join("\n")).toMatch(/memoryMiB/);
+
+      writeFileSync(
+        path.join(root, "forge.json"),
+        JSON.stringify({ execution: { runtime: "docker", image: "node:22", pids: -1 } }),
+      );
+      expect(readProjectConfig(root).errors.join("\n")).toMatch(/pids/);
+    });
+  });
+});
+
+describe("execution backend flags", () => {
+  const configured = {
+    execution: {
+      runtime: "docker" as const,
+      image: "node:22",
+      memoryMiB: 2048,
+      cpus: 1,
+      pids: 100,
+      readOnlyRoot: true,
+      limits: true,
+    },
+  };
+
+  test("flags beat forge.json so an operator can contain a run", () => {
+    const backend = executionBackendFor(configured, {
+      "sandbox-memory": "1024",
+      "sandbox-cpus": "1.5",
+      "sandbox-pids": "64",
+    });
+    expect(backend.settings).toMatchObject({ memoryMiB: 1024, cpus: 1.5, pids: 64 });
+  });
+
+  test("config bounds hold when no flag is given", () => {
+    const backend = executionBackendFor(configured, {});
+    expect(backend.settings).toMatchObject({
+      memoryMiB: 2048,
+      cpus: 1,
+      pids: 100,
+      readOnlyRoot: true,
+      limits: true,
+    });
+  });
+
+  test("weakening flags beat an explicit config true", () => {
+    const backend = executionBackendFor(configured, {
+      "sandbox-writable-root": true,
+      "sandbox-no-limits": true,
+    });
+    expect(backend.settings).toMatchObject({ readOnlyRoot: false, limits: false });
+  });
+
+  test("rejects malformed bound values by flag name", () => {
+    for (const [flag, value] of [
+      ["sandbox-memory", "abc"],
+      ["sandbox-memory", "0"],
+      ["sandbox-memory", "1.5"],
+      ["sandbox-memory", "-1"],
+      ["sandbox-pids", "Infinity"],
+      ["sandbox-cpus", "0"],
+    ] as const) {
+      expect(() => executionBackendFor(configured, { [flag]: value })).toThrow(
+        new RegExp(`--${flag}`),
+      );
+    }
+    // A bare flag parses as boolean true and is rejected, not treated as 1.
+    expect(() => executionBackendFor(configured, { "sandbox-memory": true })).toThrow(
+      /--sandbox-memory/,
+    );
+  });
+
+  test("bound flags without a container runtime resolve to the host", () => {
+    const backend = executionBackendFor({}, { "sandbox-memory": "1024" });
+    expect(backend.name).toBe("host");
+  });
+
+  test("rejects an image that would parse as a runtime option", () => {
+    expect(() =>
+      executionBackendFor({ execution: { runtime: "docker", image: "--privileged=true" } }, {}),
+    ).toThrow(/image may not start/);
+  });
+
+  test("rejects a tmpfs larger than the memory bound while limits are on", () => {
+    expect(() =>
+      executionBackendFor(
+        { execution: { runtime: "docker", image: "node:22", memoryMiB: 1024, tmpfsMiB: 8192 } },
+        {},
+      ),
+    ).toThrow(/tmpfsMiB.*memoryMiB/);
   });
 });
 

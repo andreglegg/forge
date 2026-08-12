@@ -77,7 +77,7 @@ An approved build or test command can execute arbitrary repository-controlled co
 The current TypeScript product does not yet provide:
 
 - VM, seccomp, AppArmor, or restricted-user isolation, or container isolation for anything other than model commands and the verification gate (benchmarks, hooks, and Git operations still run on the host);
-- CPU, memory, process-count, or disk quotas beyond command timeout/output bounds;
+- disk quotas (memory, CPU, and process-count bounds ship with the container backend; `--storage-opt` is storage-driver-specific and not portable across runtimes);
 - semantic aliases, inferred types, overload identity, references/callers, package exports, or TypeScript path-alias resolution;
 - complete dependency-confusion analysis or a guarantee that heuristic patch scanning finds every secret;
 - a third-party plugin or MCP permission boundary;
@@ -87,6 +87,6 @@ Do not run Forge with elevated privileges or use autonomous approval on an untru
 
 ## Production-hardening direction
 
-Optional container isolation with network-off defaults has shipped. The next execution-backend work is resource limits (CPU, memory, process count, disk) and covering the remaining host-executed paths. External tools, MCP servers, and plugins must pass through the same permission, timeout, output-bound, and audit-journal boundaries as built-in tools. The shipped headless hooks are repository commands, not yet a general extension API.
+Optional container isolation has shipped with network off, a read-only root filesystem, and default memory (4096 MiB, swap pinned equal), CPU (2), and process-count (512) bounds; `/workspace` and a bounded `/tmp` tmpfs (which also carries `HOME`) stay writable. Two enforcement caveats: on cgroups-v1 rootless systems the runtime warns and ignores resource limits rather than failing, and on cgroups-v2 rootless systems without CPU delegation the runtime hard-errors — `execution.limits: false` / `--sandbox-no-limits` is the explicit escape hatch, which drops only the cgroup bounds, never the filesystem semantics, and is announced by the backend description. The next execution-backend work is covering the remaining host-executed paths and surfacing the backend state in machine-readable output. External tools, MCP servers, and plugins must pass through the same permission, timeout, output-bound, and audit-journal boundaries as built-in tools. The shipped headless hooks are repository commands, not yet a general extension API.
 
 Security reports should include a reproducible case and affected version. Do not include real credentials or private repository content.

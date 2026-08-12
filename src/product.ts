@@ -38,6 +38,14 @@ const ExecutionSchema = z
     runtime: z.enum(["host", "docker", "podman"]).optional(),
     image: z.string().min(1).optional(),
     network: z.boolean().optional(),
+    // Sizes are MiB integers, validated here, never runtime strings like "2g":
+    // the runtime's own parser would give worse diagnostics, later.
+    memoryMiB: z.number().int().positive().optional(),
+    cpus: z.number().positive().optional(),
+    pids: z.number().int().positive().optional(),
+    tmpfsMiB: z.number().int().positive().optional(),
+    readOnlyRoot: z.boolean().optional(),
+    limits: z.boolean().optional(),
   })
   .strict();
 
