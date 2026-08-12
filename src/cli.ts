@@ -77,8 +77,10 @@ import {
   initializeProject,
   modeRefusal,
   type PermissionMode,
+  type ProfileRecommendation,
   type ProjectConfig,
   readProjectConfig,
+  recommendProfile,
   resolvePermissionMode,
   selectModelProfile,
 } from "./product.js";
@@ -1078,6 +1080,23 @@ export async function main(argv: readonly string[], io: IO = consoleIO): Promise
   if (command === "doctor") {
     const verification = project.verify ?? detectCommands(root);
     const provider = await probeProvider(config, { completion: true });
+    // Advisory cross-check of profiles against what the probe advertised.
+    // Never applied automatically, never written to disk, and never placed in
+    // model context; computed only when the endpoint named any models at all.
+    const recommendation: ProfileRecommendation =
+      provider.models.length > 0
+        ? recommendProfile(
+            {
+              url: config.baseUrl,
+              models: provider.models,
+              contextWindow: provider.contextWindow,
+              // The probe's window was read from the selected model's entry.
+              contextWindowModel: provider.selectedModel,
+            },
+            project.profiles,
+            selectedProfile.name,
+          )
+        : { recommended: null, reason: null, selectedFits: true, mismatches: [] };
     const result = {
       ok: provider.ok,
       version: FORGE_VERSION,
@@ -1088,6 +1107,7 @@ export async function main(argv: readonly string[], io: IO = consoleIO): Promise
       profile: selectedProfile.name,
       verify: verification,
       provider,
+      recommendation,
     };
     if (options["json"] === true) io.out(JSON.stringify(result, null, 2));
     else {
@@ -1102,6 +1122,19 @@ export async function main(argv: readonly string[], io: IO = consoleIO): Promise
         io.out(`✓ provider ${config.baseUrl} · ${provider.selectedModel}`);
       } else {
         io.err(`✗ provider ${config.baseUrl}: ${provider.error ?? "unhealthy"}`);
+      }
+      if (selectedProfile.name !== null && !recommendation.selectedFits) {
+        const mismatch = recommendation.mismatches.find(
+          (item) => item.name === selectedProfile.name,
+        );
+        io.out(
+          `! profile ${selectedProfile.name} does not fit this endpoint${mismatch === undefined ? "" : `: ${mismatch.reason}`}`,
+        );
+      }
+      if (recommendation.recommended !== null && recommendation.reason !== null) {
+        io.out(
+          `! ${recommendation.reason}; adopt it with --profile ${recommendation.recommended} or set "profile" in forge.json`,
+        );
       }
     }
     return result.ok ? 0 : 2;

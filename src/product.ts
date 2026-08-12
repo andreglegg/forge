@@ -88,6 +88,105 @@ export function selectModelProfile(
   return { name, profile };
 }
 
+/** What the active endpoint's preflight probe advertised; plain data, no transport. */
+export interface AdvertisedEndpoint {
+  readonly url: string;
+  readonly models: readonly string[];
+  /**
+   * The probe reads `context_length` from the selected model's `/models` entry
+   * alone, so the window is a claim about one model, not the endpoint. It is
+   * only verifiable against a profile targeting that model.
+   */
+  readonly contextWindow: number | null;
+  readonly contextWindowModel: string | null;
+}
+
+export interface ProfileMismatch {
+  readonly name: string;
+  readonly reason: string;
+}
+
+export interface ProfileRecommendation {
+  readonly recommended: string | null;
+  readonly reason: string | null;
+  readonly selectedFits: boolean;
+  readonly mismatches: readonly ProfileMismatch[];
+}
+
+function normalizedUrl(url: string): string {
+  return url.replace(/\/+$/, "");
+}
+
+/**
+ * Cross-checks configured profiles against what the endpoint advertises.
+ * Advisory only: nothing here writes configuration, and adopting the result
+ * stays an explicit user action (--profile or editing forge.json).
+ *
+ * Deterministic by construction: names are evaluated in sorted order so object
+ * key order cannot change the outcome, and the ranking is a fixed total order
+ * (exact model match, then larger declared context window, then name).
+ */
+export function recommendProfile(
+  endpoint: AdvertisedEndpoint,
+  profiles: Readonly<Record<string, ModelProfile>> | undefined,
+  selectedName: string | null,
+): ProfileRecommendation {
+  const entries = profiles ?? {};
+  const mismatches: ProfileMismatch[] = [];
+  const fits: Array<{ name: string; profile: ModelProfile }> = [];
+  for (const name of Object.keys(entries).sort()) {
+    const profile = entries[name];
+    if (profile === undefined) continue;
+    if (profile.url !== undefined && normalizedUrl(profile.url) !== normalizedUrl(endpoint.url)) {
+      mismatches.push({ name, reason: `targets a different endpoint (${profile.url})` });
+      continue;
+    }
+    if (profile.model !== undefined && !endpoint.models.includes(profile.model)) {
+      mismatches.push({ name, reason: `${profile.model} is not advertised by the endpoint` });
+      continue;
+    }
+    // A context claim is disqualifying only when the endpoint advertised a
+    // window for the model this profile would actually run: the probed window
+    // belongs to one model, a model-unset profile inherits that model, and any
+    // other model's window is unknown -- unverifiable, so never disqualifying.
+    if (
+      profile.contextWindow !== undefined &&
+      endpoint.contextWindow !== null &&
+      endpoint.contextWindowModel !== null &&
+      (profile.model === undefined || profile.model === endpoint.contextWindowModel) &&
+      profile.contextWindow > endpoint.contextWindow
+    ) {
+      mismatches.push({
+        name,
+        reason: `declares a ${profile.contextWindow}-token context window but the endpoint advertises ${endpoint.contextWindow} for ${endpoint.contextWindowModel}`,
+      });
+      continue;
+    }
+    fits.push({ name, profile });
+  }
+  const best = [...fits].sort((left, right) => {
+    const exact =
+      Number(right.profile.model !== undefined) - Number(left.profile.model !== undefined);
+    if (exact !== 0) return exact;
+    const window = (right.profile.contextWindow ?? 0) - (left.profile.contextWindow ?? 0);
+    if (window !== 0) return window;
+    return left.name < right.name ? -1 : 1;
+  })[0];
+  const selectedFits = selectedName === null || fits.some((fit) => fit.name === selectedName);
+  if (best === undefined || best.name === selectedName) {
+    return { recommended: null, reason: null, selectedFits, mismatches };
+  }
+  return {
+    recommended: best.name,
+    reason:
+      best.profile.model === undefined
+        ? `profile ${best.name} fits every model the endpoint advertises`
+        : `profile ${best.name} matches advertised model ${best.profile.model}`,
+    selectedFits,
+    mismatches,
+  };
+}
+
 export interface ProjectConfigResult {
   readonly config: ProjectConfig;
   readonly source: string | null;
