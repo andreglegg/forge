@@ -37,6 +37,11 @@ describe("the contract header", () => {
   test("is a version a client can parse", () => {
     expect(EVENT_CONTRACT_VERSION).toMatch(/^\d+\.\d+$/);
   });
+
+  test("names the compaction telemetry that 1.1 added", () => {
+    expect(EVENT_CONTRACT_VERSION).toBe("1.1");
+    expect(EVENT_TYPES).toContain("context.compacted");
+  });
 });
 
 describe("contract compatibility", () => {
@@ -57,6 +62,14 @@ describe("contract compatibility", () => {
     expect(check.ok).toBe(true);
     expect(check.degraded).toBe(true);
     expect(check.reason).toContain("skipped");
+  });
+
+  test("a 1.0 client reads a 1.1 stream degraded, not refused", () => {
+    // The additive-minor rule, exercised by the real bump rather than a
+    // hypothetical pair: 1.0 clients skip context.compacted and stay correct.
+    const check = checkContract("1.0", "1.1");
+    expect(check.ok).toBe(true);
+    expect(check.degraded).toBe(true);
   });
 
   test("accepts a client that knows more than the stream sends", () => {

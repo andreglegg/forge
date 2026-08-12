@@ -21,6 +21,7 @@
  * replay meaningless, because a replay reconstructs decisions, not typing.
  */
 
+import type { CompactionReport } from "./compaction.js";
 import type { ActionProposal } from "./protocol.js";
 import { describeProposal, mutates } from "./protocol.js";
 import { MAX_REPOSITORY_READ_CHARS } from "./repository.js";
@@ -90,7 +91,14 @@ export type RunEvent =
   | { type: "verification.started"; seq: number; commands: readonly string[] }
   | { type: "verification.finished"; seq: number; passed: boolean; detail: string }
   | { type: "run.failed"; seq: number; reason: string }
-  | { type: "run.cancelled"; seq: number };
+  | { type: "run.cancelled"; seq: number }
+  /**
+   * The outgoing transcript was compacted while the next request was being
+   * assembled, so this precedes that turn's `turn.started`; `turn` stamps the
+   * turn about to start, which is how a client correlates the two. The report
+   * is counters only -- it never carries evicted content.
+   */
+  | { type: "context.compacted"; seq: number; turn: number; report: CompactionReport };
 
 export type Decision = "once" | "always" | "deny";
 
@@ -905,6 +913,14 @@ export class Run {
    */
   reopen(reason = "verification disagreed with the reported completion"): void {
     this.emit({ type: "run.reopened", reason });
+  }
+
+  /**
+   * Record that the outgoing transcript was compacted for the upcoming turn.
+   * Durable and a state no-op: telemetry about the request, not a decision.
+   */
+  recordCompaction(report: CompactionReport): void {
+    this.emit({ type: "context.compacted", turn: this.state.turn + 1, report });
   }
 
   /** Announce verification through the event stream, in order with everything else. */

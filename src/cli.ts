@@ -42,7 +42,7 @@ import {
   runTrials,
 } from "./bench.js";
 import { NativeCodec, TextCodec } from "./codecs.js";
-import { compactTranscript } from "./compaction.js";
+import { compactTranscript, compactTranscriptReported } from "./compaction.js";
 import {
   comparePolyglotReports,
   comparePolyglotWithLittleCoder,
@@ -816,7 +816,11 @@ async function oneTurn(
   // nothing below this line can tell which ran.
   let raw = "";
   let turn: TurnIntent;
-  const requestMessages = boundTranscript(messages, transcriptBudgetChars(config));
+  const compaction = compactTranscriptReported(messages, transcriptBudgetChars(config));
+  const requestMessages = compaction.messages;
+  // Recorded only when the transcript was actually altered, so a turn that fit
+  // its budget stays silent in the journal.
+  if (compaction.report !== null) run.recordCompaction(compaction.report);
   if (native) {
     const codec = new NativeCodec();
     for await (const delta of streamNative(config, requestMessages, { signal })) {
