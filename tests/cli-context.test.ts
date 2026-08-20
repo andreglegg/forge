@@ -9,6 +9,7 @@ import {
   positiveIntegerOption,
   systemPrompt,
   taskContext,
+  taskContextBudgetChars,
   transcriptBudgetChars,
   VerificationCadence,
 } from "../src/cli.js";
@@ -267,6 +268,22 @@ describe("bounded run options", () => {
     expect(bounded.at(-1)).toEqual(messages.at(-1));
     expect(bounded.some((message) => message.content.includes("context guard"))).toBe(true);
     expect(transcriptBudgetChars({ contextWindow: 0, maxTokens: 0 })).toBeGreaterThan(100_000);
+  });
+
+  test("sizes Groq Free prompts from TPM instead of the model's 131k context window", () => {
+    const config = {
+      baseUrl: "https://api.groq.com/openai/v1",
+      model: "qwen/qwen3.6-27b",
+      apiKeyEnv: "GROQ_API_KEY",
+      temperature: 0.1,
+      maxTokens: 0,
+      contextWindow: 131_072,
+      tokensPerMinute: 8_000,
+    };
+
+    expect(transcriptBudgetChars(config)).toBe(15_500);
+    expect(taskContextBudgetChars(config, 2_500)).toBe(12_000);
+    expect(transcriptBudgetChars({ ...config, tokensPerMinute: 0 })).toBeGreaterThan(300_000);
   });
 
   test("retains omitted failures, paths, and user constraints as compact evidence", () => {

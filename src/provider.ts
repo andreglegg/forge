@@ -20,6 +20,8 @@ export interface ProviderConfig {
   /** 0 means "derive from the endpoint's declared window". */
   readonly maxTokens: number;
   readonly contextWindow: number;
+  /** Optional provider throughput cap, distinct from the model context window. */
+  readonly tokensPerMinute?: number;
 }
 
 export const DEFAULT_PROVIDER: ProviderConfig = {
@@ -160,18 +162,22 @@ export async function probeProvider(
         error: null,
       };
     }
-    const completion = await fetchLike(`${config.baseUrl}/chat/completions`, {
-      method: "POST",
-      headers: { ...headers, "content-type": "application/json" },
-      body: JSON.stringify({
-        model: selectedModel,
-        messages: [{ role: "user", content: "Reply with OK." }],
-        temperature: 0,
-        max_tokens: 1,
-        stream: false,
-      }),
-      signal: AbortSignal.timeout(30_000),
-    });
+    const completion = await requestWithRateLimitRetry(
+      `${config.baseUrl}/chat/completions`,
+      {
+        method: "POST",
+        headers: { ...headers, "content-type": "application/json" },
+        body: JSON.stringify({
+          model: selectedModel,
+          messages: [{ role: "user", content: "Reply with OK." }],
+          temperature: 0,
+          max_tokens: 1,
+          stream: false,
+        }),
+        signal: AbortSignal.timeout(30_000),
+      },
+      fetchLike,
+    );
     if (!completion.ok) {
       return {
         ok: false,
@@ -231,13 +237,23 @@ export function replyBudget(config: ProviderConfig): number {
   if (config.maxTokens > 0) {
     return config.maxTokens;
   }
-  if (config.contextWindow <= 0) {
-    return 3000;
-  }
-  return Math.max(
-    512,
-    Math.min(8192, Math.floor(config.contextWindow / 8), Math.floor(config.contextWindow / 4)),
-  );
+  const derived =
+    config.contextWindow <= 0
+      ? 3000
+      : Math.max(
+          512,
+          Math.min(
+            8192,
+            Math.floor(config.contextWindow / 8),
+            Math.floor(config.contextWindow / 4),
+          ),
+        );
+  const rateLimit = config.tokensPerMinute ?? 0;
+  if (rateLimit <= 0) return derived;
+  // A constrained provider needs room for the next input too. One eighth keeps
+  // a useful edit-sized reply while leaving most of the minute for repository
+  // context; an explicit --max-tokens remains an intentional override.
+  return Math.min(derived, Math.max(256, Math.floor(rateLimit / 8)));
 }
 
 /**
@@ -258,18 +274,22 @@ export async function* streamCompletion(
   if (key) {
     headers["authorization"] = `Bearer ${key}`;
   }
-  const response = await fetchLike(`${config.baseUrl}/chat/completions`, {
-    method: "POST",
-    headers,
-    body: JSON.stringify({
-      model: config.model,
-      messages,
-      temperature: config.temperature,
-      max_tokens: replyBudget(config),
-      stream: true,
-    }),
-    ...(options.signal ? { signal: options.signal } : {}),
-  });
+  const response = await requestWithRateLimitRetry(
+    `${config.baseUrl}/chat/completions`,
+    {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        model: config.model,
+        messages,
+        temperature: config.temperature,
+        max_tokens: replyBudget(config),
+        stream: true,
+      }),
+      ...(options.signal ? { signal: options.signal } : {}),
+    },
+    fetchLike,
+  );
   if (!response.ok) {
     throw new ProviderError(
       `HTTP ${response.status} from ${config.baseUrl}: ${clip(await response.text())}`,
@@ -310,6 +330,56 @@ export async function* streamCompletion(
       }
     }
   }
+}
+
+const MAX_RATE_LIMIT_RETRY_MS = 65_000;
+
+function retryDelayMs(headers: Headers): number | null {
+  const retryAfter = headers.get("retry-after");
+  if (retryAfter !== null) {
+    const seconds = Number(retryAfter);
+    if (Number.isFinite(seconds) && seconds >= 0) return Math.ceil(seconds * 1000);
+    const date = Date.parse(retryAfter);
+    if (Number.isFinite(date)) return Math.max(0, date - Date.now());
+  }
+  const reset = headers.get("x-ratelimit-reset-tokens");
+  if (reset === null) return null;
+  const match = /^(?:(\d+(?:\.\d+)?)m)?(?:(\d+(?:\.\d+)?)s)?$/.exec(reset.trim());
+  if (match === null) return null;
+  const minutes = Number(match[1] ?? 0);
+  const seconds = Number(match[2] ?? 0);
+  const milliseconds = (minutes * 60 + seconds) * 1000;
+  return Number.isFinite(milliseconds) ? Math.ceil(milliseconds) : null;
+}
+
+async function delay(ms: number, signal?: AbortSignal): Promise<void> {
+  if (ms <= 0) return;
+  await new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(resolve, ms);
+    if (signal === undefined) return;
+    const aborted = (): void => {
+      clearTimeout(timer);
+      reject(signal.reason instanceof Error ? signal.reason : new Error("request aborted"));
+    };
+    if (signal.aborted) aborted();
+    else signal.addEventListener("abort", aborted, { once: true });
+  });
+}
+
+async function requestWithRateLimitRetry(
+  url: string,
+  init: RequestInit,
+  fetchLike: FetchLike,
+): Promise<Response> {
+  let response = await fetchLike(url, init);
+  if (response.status !== 429) return response;
+  const wait = retryDelayMs(response.headers);
+  if (wait === null || wait > MAX_RATE_LIMIT_RETRY_MS) return response;
+  // Consume the first response before reusing the request body and socket.
+  await response.text();
+  await delay(wait, init.signal ?? undefined);
+  response = await fetchLike(url, init);
+  return response;
 }
 
 function clip(text: string, limit = 300): string {

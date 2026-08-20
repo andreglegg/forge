@@ -11,6 +11,7 @@ import {
   resolvePermissionMode,
   selectModelProfile,
 } from "../src/product.js";
+import { DEFAULT_PROVIDER } from "../src/provider.js";
 
 function capturedIO(): { readonly io: IO; readonly out: string[]; readonly err: string[] } {
   const out: string[] = [];
@@ -72,7 +73,10 @@ describe("project configuration", () => {
       expect(JSON.parse(configured.out.join("\n"))).toMatchObject({
         mode: "read-only",
         verify: [["npm", "test"]],
-        provider: { url: "http://127.0.0.1:8790/v1", model: null },
+        provider: {
+          url: DEFAULT_PROVIDER.baseUrl,
+          model: DEFAULT_PROVIDER.model || null,
+        },
       });
       expect([...initialized.err, ...configured.err]).toEqual([]);
     });
@@ -170,7 +174,38 @@ describe("project configuration", () => {
         model: "qwen/qwen3.6-27b",
         apiKeyEnv: "GROQ_API_KEY",
       });
+      expect(result.provider.tokensPerMinute).toBe(8_000);
       expect(JSON.stringify(result)).not.toContain("groq-secret-value");
+    });
+  });
+
+  test("lets an explicit TPM setting override or disable Groq Free inference", async () => {
+    await withRepo(async (root) => {
+      for (const [value, expected] of [
+        ["16000", 16_000],
+        ["0", 0],
+      ] as const) {
+        const configured = capturedIO();
+        const code = await main(
+          [
+            "config",
+            "--repo",
+            root,
+            "--url",
+            "https://api.groq.com/openai/v1",
+            "--model",
+            "qwen/qwen3.6-27b",
+            "--tpm",
+            value,
+            "--json",
+          ],
+          configured.io,
+        );
+        const result = JSON.parse(configured.out.join("\n"));
+
+        expect(code).toBe(0);
+        expect(result.provider.tokensPerMinute).toBe(expected);
+      }
     });
   });
 

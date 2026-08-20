@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { type FetchLike, probeProvider } from "../src/provider.js";
+import { type FetchLike, probeProvider, replyBudget, streamCompletion } from "../src/provider.js";
 
 function queuedFetch(responses: Response[]): FetchLike {
   return (async () => {
@@ -8,6 +8,54 @@ function queuedFetch(responses: Response[]): FetchLike {
     return response;
   }) as FetchLike;
 }
+
+describe("provider throughput limits", () => {
+  test("reserves most of an 8k TPM tier for input unless max tokens is explicit", () => {
+    const base = {
+      baseUrl: "https://api.groq.com/openai/v1",
+      model: "qwen/qwen3.6-27b",
+      apiKeyEnv: "GROQ_API_KEY",
+      temperature: 0.1,
+      contextWindow: 131_072,
+      tokensPerMinute: 8_000,
+    };
+
+    expect(replyBudget({ ...base, maxTokens: 0 })).toBe(1_000);
+    expect(replyBudget({ ...base, maxTokens: 2_048 })).toBe(2_048);
+  });
+
+  test("retries one rate-limited streaming request after the provider reset", async () => {
+    const fetchLike = queuedFetch([
+      new Response("rate limited", {
+        status: 429,
+        headers: { "x-ratelimit-reset-tokens": "0s" },
+      }),
+      new Response('data: {"choices":[{"delta":{"content":"OK"}}]}\n\ndata: [DONE]\n\n', {
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+      }),
+    ]);
+    let output = "";
+
+    for await (const delta of streamCompletion(
+      {
+        baseUrl: "https://api.groq.com/openai/v1",
+        model: "qwen/qwen3.6-27b",
+        apiKeyEnv: "GROQ_API_KEY",
+        temperature: 0.1,
+        maxTokens: 0,
+        contextWindow: 131_072,
+        tokensPerMinute: 8_000,
+      },
+      [{ role: "user", content: "hello" }],
+      { fetchLike },
+    )) {
+      output += delta;
+    }
+
+    expect(output).toBe("OK");
+  });
+});
 
 describe("provider health probing", () => {
   test("confirms the configured model can answer a minimal completion", async () => {

@@ -63,8 +63,8 @@ A Groq Qwen profile can therefore stay safe to commit:
       "url": "https://api.groq.com/openai/v1",
       "model": "qwen/qwen3.6-27b",
       "apiKeyEnv": "GROQ_API_KEY",
+      "tokensPerMinute": 8000,
       "contextWindow": 131072,
-      "maxTokens": 4096,
       "temperature": 0.6,
       "maxTurns": 12
     }
@@ -79,6 +79,17 @@ export GROQ_API_KEY="..."
 forge doctor --profile groq-qwen-27b
 forge run "<task>" --profile groq-qwen-27b
 ```
+
+For `qwen/qwen3.6-27b` on the exact Groq API host, Forge currently infers an
+8,000-token/minute provider cap even when the model's declared context is
+131,072. Those are different limits: `contextWindow` describes what the model
+can address, while `tokensPerMinute` constrains what the service tier will
+accept in a minute. Under that 8K cap Forge defaults the completion reservation
+to 1,000 tokens, shrinks repository/transcript context to leave input headroom,
+and retries one HTTP 429 after the provider's advertised reset. Use `--tpm <n>`
+or `FORGE_TPM` for a different tier; `--tpm 0` explicitly disables the inferred
+cap. Avoid an explicit large `maxTokens` on the free tier because the provider
+can count the reserved completion against TPM before generation starts.
 
 `verify` is worth setting explicitly. Forge auto-detects npm, pnpm, Yarn, Bun,
 Python, Rust, and Go root checks; for JavaScript projects it prefers a root

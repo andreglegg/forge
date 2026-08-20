@@ -14,6 +14,7 @@ const ModelProfileSchema = z
       .string()
       .regex(/^[A-Za-z_][A-Za-z0-9_]*$/)
       .optional(),
+    tokensPerMinute: z.number().int().nonnegative().optional(),
     contextWindow: z.number().int().positive().optional(),
     maxTokens: z.number().int().positive().optional(),
     temperature: z.number().min(0).max(2).optional(),
@@ -119,6 +120,7 @@ const ProjectConfigSchema = z
       .string()
       .regex(/^[A-Za-z_][A-Za-z0-9_]*$/)
       .optional(),
+    tokensPerMinute: z.number().int().nonnegative().optional(),
     verify: z.array(z.array(z.string()).min(1)).optional(),
     verifyAdapters: z.array(VerifyAdapterSchema).optional(),
     profile: z.string().min(1).optional(),

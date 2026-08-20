@@ -204,6 +204,7 @@ const USAGE = [
   "  --model <name>           model id            (FORGE_MODEL)",
   "  --url <base>             OpenAI-compatible base url  (FORGE_URL)",
   "  --api-key-env <name>     env var containing provider key (FORGE_API_KEY_ENV)",
+  "  --tpm <tokens>           provider token/minute cap; 0 disables (FORGE_TPM)",
   "  --context <tokens>       declared context window, sizes the reply budget",
   "  --max-tokens <n>         explicit reply-token budget (0 = derive)",
   "  --temperature <n>        sampling temperature (default 0.1)",
@@ -249,6 +250,23 @@ export function inferredApiKeyEnv(baseUrl: string): string {
   return DEFAULT_PROVIDER.apiKeyEnv;
 }
 
+/** Conservative public-service cap; explicit --tpm / FORGE_TPM always wins. */
+export function inferredTokensPerMinute(baseUrl: string, model: string): number {
+  try {
+    const endpoint = new URL(baseUrl);
+    if (
+      endpoint.protocol === "https:" &&
+      endpoint.hostname === "api.groq.com" &&
+      model === "qwen/qwen3.6-27b"
+    ) {
+      return 8_000;
+    }
+  } catch {
+    // Invalid URLs are rejected by config parsing or the provider itself.
+  }
+  return 0;
+}
+
 function providerFrom(options: Record<string, string | boolean>): ProviderConfig {
   const integer = (key: string, fallback: number): number => {
     const raw = options[key];
@@ -264,18 +282,27 @@ function providerFrom(options: Record<string, string | boolean>): ProviderConfig
     (typeof options["url"] === "string" ? options["url"] : undefined) ??
     process.env["FORGE_URL"] ??
     DEFAULT_PROVIDER.baseUrl;
+  const model =
+    (typeof options["model"] === "string" ? options["model"] : undefined) ??
+    process.env["FORGE_MODEL"] ??
+    DEFAULT_PROVIDER.model;
   const apiKeyEnv =
     (typeof options["api-key-env"] === "string" ? options["api-key-env"] : undefined) ??
     process.env["FORGE_API_KEY_ENV"] ??
     inferredApiKeyEnv(baseUrl);
+  const rawTpm =
+    (typeof options["tpm"] === "string" ? options["tpm"] : undefined) ?? process.env["FORGE_TPM"];
+  const parsedTpm = rawTpm === undefined ? Number.NaN : Number.parseInt(rawTpm, 10);
+  const tokensPerMinute =
+    Number.isInteger(parsedTpm) && parsedTpm >= 0
+      ? parsedTpm
+      : inferredTokensPerMinute(baseUrl, model);
   return {
     ...DEFAULT_PROVIDER,
     baseUrl,
+    model,
     apiKeyEnv,
-    model:
-      (typeof options["model"] === "string" ? options["model"] : undefined) ??
-      process.env["FORGE_MODEL"] ??
-      DEFAULT_PROVIDER.model,
+    tokensPerMinute,
     temperature: number("temperature", DEFAULT_PROVIDER.temperature),
     maxTokens: integer("max-tokens", DEFAULT_PROVIDER.maxTokens),
     contextWindow: integer("context", DEFAULT_PROVIDER.contextWindow),
@@ -291,11 +318,44 @@ export function positiveIntegerOption(
 }
 
 export function transcriptBudgetChars(
-  config: Pick<ProviderConfig, "contextWindow" | "maxTokens">,
+  config: Pick<ProviderConfig, "contextWindow" | "maxTokens" | "tokensPerMinute">,
 ): number {
   const window = config.contextWindow > 0 ? config.contextWindow : 48_000;
   const replyReserve = config.maxTokens > 0 ? config.maxTokens : 4_096;
-  return Math.max(32_000, Math.floor(Math.max(8_000, window - replyReserve) * 2.5));
+  const modelBudget = Math.max(32_000, Math.floor(Math.max(8_000, window - replyReserve) * 2.5));
+  const rateLimit = config.tokensPerMinute ?? 0;
+  if (rateLimit <= 0) return modelBudget;
+
+  // TPM is a throughput envelope, not a context window. Code can tokenize at
+  // close to two characters/token, so size conservatively and reserve both the
+  // completion plus 10% for wrappers/tokenizer variance. This prevents a large
+  // model window from producing a request the service tier refuses outright.
+  const derivedReply =
+    config.maxTokens > 0
+      ? config.maxTokens
+      : config.contextWindow <= 0
+        ? 3_000
+        : Math.max(
+            512,
+            Math.min(
+              8_192,
+              Math.floor(config.contextWindow / 8),
+              Math.floor(config.contextWindow / 4),
+            ),
+          );
+  const outputTokens =
+    config.maxTokens > 0
+      ? derivedReply
+      : Math.min(derivedReply, Math.max(256, Math.floor(rateLimit / 8)));
+  const safetyTokens = Math.max(256, Math.ceil(rateLimit * 0.1));
+  const inputTokens = Math.max(1_024, rateLimit - outputTokens - safetyTokens);
+  const rateBudget = Math.floor(inputTokens * 2.5);
+  return Math.min(modelBudget, rateBudget);
+}
+
+export function taskContextBudgetChars(config: ProviderConfig, fixedChars = 0): number {
+  const available = transcriptBudgetChars(config) - Math.max(0, fixedChars) - 1_000;
+  return Math.max(2_000, Math.min(24_000, available));
 }
 
 /** Keep setup, newest turns, and high-value omitted evidence under budget. */
@@ -1101,12 +1161,22 @@ export async function main(
   const explicitModel = typeof options["model"] === "string" || Boolean(process.env["FORGE_MODEL"]);
   const explicitApiKeyEnv =
     typeof options["api-key-env"] === "string" || Boolean(process.env["FORGE_API_KEY_ENV"]);
+  const explicitTpm = typeof options["tpm"] === "string" || process.env["FORGE_TPM"] !== undefined;
   if (!explicitUrl) config = { ...config, baseUrl: profile.url ?? project.url ?? config.baseUrl };
   if (!explicitModel) config = { ...config, model: profile.model ?? project.model ?? config.model };
   if (!explicitApiKeyEnv) {
     config = {
       ...config,
       apiKeyEnv: profile.apiKeyEnv ?? project.apiKeyEnv ?? inferredApiKeyEnv(config.baseUrl),
+    };
+  }
+  if (!explicitTpm) {
+    config = {
+      ...config,
+      tokensPerMinute:
+        profile.tokensPerMinute ??
+        project.tokensPerMinute ??
+        inferredTokensPerMinute(config.baseUrl, config.model),
     };
   }
   if (typeof options["context"] !== "string" && profile.contextWindow !== undefined) {
@@ -1176,6 +1246,7 @@ export async function main(
         url: config.baseUrl,
         model: config.model || null,
         apiKeyEnv: config.apiKeyEnv,
+        tokensPerMinute: config.tokensPerMinute ?? 0,
         contextWindow: config.contextWindow,
         maxTokens: config.maxTokens,
         temperature: config.temperature,
@@ -1488,6 +1559,7 @@ export async function main(
       ...(options["batch-actions"] === true ? ["--batch-actions"] : []),
       ...(config.contextWindow > 0 ? ["--context", String(config.contextWindow)] : []),
       ...(config.maxTokens > 0 ? ["--max-tokens", String(config.maxTokens)] : []),
+      ...((config.tokensPerMinute ?? 0) > 0 ? ["--tpm", String(config.tokensPerMinute)] : []),
       ...["--temperature", String(config.temperature)],
       ...(typeof options["max-turns"] === "string"
         ? ["--max-turns", String(positiveIntegerOption(options["max-turns"], 12))]
@@ -2301,17 +2373,20 @@ async function headless(
   })();
 
   run.start(task);
-  const context = await taskContext(workspace, task, 24_000, options["task-packet"] === true);
+  const prompt = systemPrompt(
+    native,
+    options["batch-actions"] === true,
+    mode,
+    mcp === null ? null : mcp.tools(),
+  );
+  const context = await taskContext(
+    workspace,
+    task,
+    taskContextBudgetChars(config, prompt.length + task.length),
+    options["task-packet"] === true,
+  );
   const messages: Message[] = [
-    {
-      role: "system",
-      content: systemPrompt(
-        native,
-        options["batch-actions"] === true,
-        mode,
-        mcp === null ? null : mcp.tools(),
-      ),
-    },
+    { role: "system", content: prompt },
     { role: "user", content: `${context.text}\n\n${task}` },
   ];
   let code = 1;
@@ -2675,7 +2750,6 @@ async function interactive(
   // means "this project is working" and the guess does not.
   let commands = project.verify ?? detectCommands(workspace.root);
   let lastReceipt: ContextReceipt | null = null;
-  const contextBudget = 24_000;
   let resumeNotice: string | null = null;
   if (initialResume !== null) {
     const restored = await restoredSession(workspace.root, initialResume.id);
@@ -2783,7 +2857,12 @@ async function interactive(
         continue;
       }
 
-      const context = await taskContext(workspace, input, contextBudget, taskPacket);
+      const context = await taskContext(
+        workspace,
+        input,
+        taskContextBudgetChars(config, (transcript[0]?.content.length ?? 0) + input.length),
+        taskPacket,
+      );
       lastReceipt = context.receipt;
       transcript.push({ role: "user", content: `${context.text}\n\n${input}` });
       const run = new Run(
