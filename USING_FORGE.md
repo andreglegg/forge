@@ -48,6 +48,38 @@ override. Explicit CLI flags and `FORGE_URL` / `FORGE_MODEL` win over profiles.
 Legacy top-level `url` and `model` keys remain supported below profiles in the
 precedence order.
 
+For authenticated OpenAI-compatible providers, configure the **environment
+variable name**, never the secret value. Forge reads `FORGE_API_KEY` by default,
+accepts `apiKeyEnv` in a profile or `--api-key-env <NAME>`, and automatically
+uses `GROQ_API_KEY` for the exact HTTPS host `api.groq.com`. Lookalike and HTTP
+hosts do not receive that inference.
+
+A Groq Qwen profile can therefore stay safe to commit:
+
+```json
+{
+  "profiles": {
+    "groq-qwen-27b": {
+      "url": "https://api.groq.com/openai/v1",
+      "model": "qwen/qwen3.6-27b",
+      "apiKeyEnv": "GROQ_API_KEY",
+      "contextWindow": 131072,
+      "maxTokens": 4096,
+      "temperature": 0.6,
+      "maxTurns": 12
+    }
+  }
+}
+```
+
+Then export the key in the shell that launches Forge and run:
+
+```sh
+export GROQ_API_KEY="..."
+forge doctor --profile groq-qwen-27b
+forge run "<task>" --profile groq-qwen-27b
+```
+
 `verify` is worth setting explicitly. Forge auto-detects npm, pnpm, Yarn, Bun,
 Python, Rust, and Go root checks; for JavaScript projects it prefers a root
 `check` script and falls back to `test`. Naming the commands still removes the

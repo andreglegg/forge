@@ -203,6 +203,7 @@ const USAGE = [
   "  --profile <name>         named model profile from forge.json",
   "  --model <name>           model id            (FORGE_MODEL)",
   "  --url <base>             OpenAI-compatible base url  (FORGE_URL)",
+  "  --api-key-env <name>     env var containing provider key (FORGE_API_KEY_ENV)",
   "  --context <tokens>       declared context window, sizes the reply budget",
   "  --max-tokens <n>         explicit reply-token budget (0 = derive)",
   "  --temperature <n>        sampling temperature (default 0.1)",
@@ -236,6 +237,18 @@ const USAGE = [
   "  --version                print the installed Forge version",
 ].join("\n");
 
+export function inferredApiKeyEnv(baseUrl: string): string {
+  try {
+    const endpoint = new URL(baseUrl);
+    if (endpoint.protocol === "https:" && endpoint.hostname === "api.groq.com") {
+      return "GROQ_API_KEY";
+    }
+  } catch {
+    // URL validation happens at the CLI/config boundary; fallback stays safe.
+  }
+  return DEFAULT_PROVIDER.apiKeyEnv;
+}
+
 function providerFrom(options: Record<string, string | boolean>): ProviderConfig {
   const integer = (key: string, fallback: number): number => {
     const raw = options[key];
@@ -247,12 +260,18 @@ function providerFrom(options: Record<string, string | boolean>): ProviderConfig
     const parsed = typeof raw === "string" ? Number(raw) : Number.NaN;
     return Number.isFinite(parsed) ? parsed : fallback;
   };
+  const baseUrl =
+    (typeof options["url"] === "string" ? options["url"] : undefined) ??
+    process.env["FORGE_URL"] ??
+    DEFAULT_PROVIDER.baseUrl;
+  const apiKeyEnv =
+    (typeof options["api-key-env"] === "string" ? options["api-key-env"] : undefined) ??
+    process.env["FORGE_API_KEY_ENV"] ??
+    inferredApiKeyEnv(baseUrl);
   return {
     ...DEFAULT_PROVIDER,
-    baseUrl:
-      (typeof options["url"] === "string" ? options["url"] : undefined) ??
-      process.env["FORGE_URL"] ??
-      DEFAULT_PROVIDER.baseUrl,
+    baseUrl,
+    apiKeyEnv,
     model:
       (typeof options["model"] === "string" ? options["model"] : undefined) ??
       process.env["FORGE_MODEL"] ??
@@ -1080,8 +1099,16 @@ export async function main(
   // which beats project-level compatibility keys, which beat defaults.
   const explicitUrl = typeof options["url"] === "string" || Boolean(process.env["FORGE_URL"]);
   const explicitModel = typeof options["model"] === "string" || Boolean(process.env["FORGE_MODEL"]);
+  const explicitApiKeyEnv =
+    typeof options["api-key-env"] === "string" || Boolean(process.env["FORGE_API_KEY_ENV"]);
   if (!explicitUrl) config = { ...config, baseUrl: profile.url ?? project.url ?? config.baseUrl };
   if (!explicitModel) config = { ...config, model: profile.model ?? project.model ?? config.model };
+  if (!explicitApiKeyEnv) {
+    config = {
+      ...config,
+      apiKeyEnv: profile.apiKeyEnv ?? project.apiKeyEnv ?? inferredApiKeyEnv(config.baseUrl),
+    };
+  }
   if (typeof options["context"] !== "string" && profile.contextWindow !== undefined) {
     config = { ...config, contextWindow: profile.contextWindow };
   }
@@ -1148,6 +1175,7 @@ export async function main(
       provider: {
         url: config.baseUrl,
         model: config.model || null,
+        apiKeyEnv: config.apiKeyEnv,
         contextWindow: config.contextWindow,
         maxTokens: config.maxTokens,
         temperature: config.temperature,

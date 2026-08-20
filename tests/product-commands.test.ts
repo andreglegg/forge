@@ -89,6 +89,7 @@ describe("project configuration", () => {
             local: {
               url: "http://127.0.0.1:44100/v1",
               model: "local-model",
+              apiKeyEnv: "LOCAL_MODEL_API_KEY",
               contextWindow: 65_536,
               maxTokens: 4_096,
               temperature: 0.2,
@@ -111,6 +112,7 @@ describe("project configuration", () => {
         name: "local",
         profile: {
           model: "local-model",
+          apiKeyEnv: "LOCAL_MODEL_API_KEY",
           contextWindow: 65_536,
           maxTokens: 4_096,
           native: true,
@@ -131,6 +133,7 @@ describe("project configuration", () => {
         provider: {
           url: "http://127.0.0.1:44100/v1",
           model: "local-model",
+          apiKeyEnv: "LOCAL_MODEL_API_KEY",
           contextWindow: 65_536,
           maxTokens: 4_096,
           temperature: 0.2,
@@ -139,6 +142,80 @@ describe("project configuration", () => {
         },
       });
       expect([...listed.err, ...configured.err]).toEqual([]);
+    });
+  });
+
+  test("uses GROQ_API_KEY for the exact Groq API host without exposing the key", async () => {
+    await withRepo(async (root) => {
+      const configured = capturedIO();
+
+      const code = await main(
+        [
+          "config",
+          "--repo",
+          root,
+          "--url",
+          "https://api.groq.com/openai/v1",
+          "--model",
+          "qwen/qwen3.6-27b",
+          "--json",
+        ],
+        configured.io,
+      );
+      const result = JSON.parse(configured.out.join("\n"));
+
+      expect(code).toBe(0);
+      expect(result.provider).toMatchObject({
+        url: "https://api.groq.com/openai/v1",
+        model: "qwen/qwen3.6-27b",
+        apiKeyEnv: "GROQ_API_KEY",
+      });
+      expect(JSON.stringify(result)).not.toContain("groq-secret-value");
+    });
+  });
+
+  test("does not send the Groq key to lookalike or insecure hosts", async () => {
+    await withRepo(async (root) => {
+      for (const url of [
+        "https://api.groq.com.attacker.invalid/openai/v1",
+        "http://api.groq.com/openai/v1",
+      ]) {
+        const configured = capturedIO();
+        const code = await main(
+          ["config", "--repo", root, "--url", url, "--model", "qwen/qwen3.6-27b", "--json"],
+          configured.io,
+        );
+        const result = JSON.parse(configured.out.join("\n"));
+
+        expect(code).toBe(0);
+        expect(result.provider.apiKeyEnv).toBe("FORGE_API_KEY");
+      }
+    });
+  });
+
+  test("lets an explicit API-key environment override Groq inference", async () => {
+    await withRepo(async (root) => {
+      const configured = capturedIO();
+
+      const code = await main(
+        [
+          "config",
+          "--repo",
+          root,
+          "--url",
+          "https://api.groq.com/openai/v1",
+          "--model",
+          "qwen/qwen3.6-27b",
+          "--api-key-env",
+          "MY_GROQ_KEY",
+          "--json",
+        ],
+        configured.io,
+      );
+      const result = JSON.parse(configured.out.join("\n"));
+
+      expect(code).toBe(0);
+      expect(result.provider.apiKeyEnv).toBe("MY_GROQ_KEY");
     });
   });
 
