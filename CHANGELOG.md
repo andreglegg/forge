@@ -6,6 +6,13 @@ All notable product changes are recorded here. Forge follows semantic versioning
 
 _No changes yet._
 
+## [0.2.0](https://github.com/andreglegg/forge/compare/v0.1.2...v0.2.0) (2026-08-27)
+
+
+### Features
+
+* add guarded global npm self-update ([#11](https://github.com/andreglegg/forge/issues/11)) ([c516032](https://github.com/andreglegg/forge/commit/c5160324273bddb7b97b4bd1a9379087319ab24b))
+
 ## [0.1.2](https://github.com/andreglegg/forge/compare/v0.1.1...v0.1.2) (2026-08-27)
 
 
