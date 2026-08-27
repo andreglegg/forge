@@ -36,10 +36,15 @@ describe("product help", () => {
     const comparatorCode = await main(["compare-little-coder"], comparator.io);
 
     expect(helpCode).toBe(0);
-    expect(help.out.join("\n")).toContain("coding-agent harness");
-    expect(help.out.join("\n")).toContain("forge compare <a> <b>");
-    expect(help.out.join("\n")).toContain("forge update");
-    expect(help.out.join("\n")).not.toMatch(/little[ -]coder/i);
+    const output = help.out.join("\n");
+    expect(output).toContain("coding-agent harness");
+    expect(output).toContain("Quick start:");
+    expect(output).toContain("forge doctor");
+    expect(output).toContain("forge init");
+    expect(output.indexOf("Quick start:")).toBeLessThan(output.indexOf("forge run <task>"));
+    expect(output).toContain("forge compare <a> <b>");
+    expect(output).toContain("forge update");
+    expect(output).not.toMatch(/little[ -]coder/i);
     expect(help.err).toEqual([]);
 
     expect(comparatorCode).toBe(2);

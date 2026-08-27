@@ -201,6 +201,11 @@ describe("release automation", () => {
     expect(workflow).toContain("node-version: 24");
     expect(workflow).toContain("npm run check");
     expect(workflow).toContain("npm publish --access public");
+    expect(workflow).toContain("Smoke published npm package");
+    expect(workflow).toContain('npm view "@aglegg/forge-harness@$VERSION"');
+    expect(workflow).toContain('npm exec --yes --package="@aglegg/forge-harness@$VERSION"');
+    expect(workflow).toContain("forge --version");
+    expect(workflow).toContain("forge help");
     expect(workflow).not.toContain("NPM_TOKEN");
   });
 });
