@@ -60,6 +60,17 @@ async function advertisingStub(): Promise<StubHandle> {
   return { server, url: `http://127.0.0.1:${address.port}/v1` };
 }
 
+async function unavailableStub(): Promise<StubHandle> {
+  const server = createServer((_request, response) => {
+    response.writeHead(503, { "content-type": "text/plain" });
+    response.end("model server unavailable");
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  if (address === null || typeof address === "string") throw new Error("stub did not bind");
+  return { server, url: `http://127.0.0.1:${address.port}/v1` };
+}
+
 async function repository(config: object): Promise<string> {
   const root = realpathSync(await mkdtemp(path.join(tmpdir(), "forge-doctor-recommend-")));
   writeFileSync(path.join(root, "forge.json"), `${JSON.stringify(config, null, 2)}\n`);
@@ -68,6 +79,7 @@ async function repository(config: object): Promise<string> {
 
 interface DoctorJson {
   readonly ok: boolean;
+  readonly nextSteps: readonly string[];
   readonly recommendation: {
     readonly recommended: string | null;
     readonly reason: string | null;
@@ -172,5 +184,38 @@ describe("doctor profile recommendation", () => {
       mismatches: [],
     });
     expect([...human.out, ...human.err].join("\n")).not.toContain("--profile");
+  }, 30_000);
+
+  test("turns an unhealthy first-run setup into concrete next steps", async () => {
+    const root = realpathSync(await mkdtemp(path.join(tmpdir(), "forge-doctor-first-run-")));
+    cleanup.push(async () => rm(root, { recursive: true, force: true }));
+    writeFileSync(
+      path.join(root, "package.json"),
+      JSON.stringify({ scripts: { test: "node --test" } }),
+    );
+    const stub = await unavailableStub();
+    cleanup.push(
+      async () =>
+        new Promise<void>((resolve, reject) =>
+          stub.server.close((error) => (error ? reject(error) : resolve())),
+        ),
+    );
+
+    const json = capturedIO();
+    const jsonCode = await main(["doctor", "--repo", root, "--url", stub.url, "--json"], json.io);
+    const human = capturedIO();
+    const humanCode = await main(["doctor", "--repo", root, "--url", stub.url], human.io);
+
+    const parsed = JSON.parse(json.out.join("\n")) as DoctorJson;
+    const lines = [...human.out, ...human.err].join("\n");
+    expect(jsonCode).toBe(2);
+    expect(humanCode).toBe(2);
+    expect(parsed.nextSteps).toEqual([
+      expect.stringMatching(/forge init/i),
+      expect.stringMatching(/--url <base-url>/i),
+    ]);
+    expect(lines).toMatch(/config.*detected defaults/i);
+    expect(lines).toMatch(/next:.*forge init/i);
+    expect(lines).toMatch(/next:.*--url <base-url>/i);
   }, 30_000);
 });

@@ -19,8 +19,10 @@ Forge requires Node.js 22.12 or newer. From npm:
 
 ```sh
 npm install --global @aglegg/forge-harness
-forge --version
+cd /path/to/your/project
 forge doctor
+forge init
+forge
 ```
 
 From this repository:

@@ -173,14 +173,17 @@ export const consoleIO: IO = {
 const USAGE = [
   "forge — a coding-agent harness for local and small models",
   "",
-  "  forge                    interactive chat in the current directory",
+  "Quick start:",
+  "  forge doctor             check project, provider, model, and verifier",
+  "  forge init               save detected project settings to forge.json",
+  "  forge                    start interactive chat in the current directory",
+  "",
+  "Commands:",
   "  forge run <task>         one shot, exits 0 on success",
   "  forge plan <task>        inspect and produce a plan without effects",
   "  forge serve              serve runs over stdio: NDJSON requests in, envelopes out",
   "  forge continue [id]      reopen interactive chat with retained history",
   "  forge resume [id]        alias for continue",
-  "  forge doctor             validate project, provider, model, and verifier",
-  "  forge init               create an idempotent forge.json",
   "  forge config             print resolved configuration",
   "  forge profiles           list named model profiles",
   "  forge update             force an npm update check for global installs",
@@ -1300,6 +1303,28 @@ export async function main(
             selectedProfile.name,
           )
         : { recommended: null, reason: null, selectedFits: true, mismatches: [] };
+    const nextSteps: string[] = [];
+    if (projectResult.source === null) {
+      nextSteps.push(
+        "Run `forge init` to create forge.json from the project settings Forge detected.",
+      );
+    }
+    if (verification.length === 0) {
+      nextSteps.push(
+        "Add a verification command to forge.json so Forge can prove completed changes.",
+      );
+    }
+    if (!provider.ok) {
+      if (recommendation.recommended !== null) {
+        nextSteps.push(
+          `Retry with --profile ${recommendation.recommended}, or set "profile" in forge.json.`,
+        );
+      } else {
+        nextSteps.push(
+          `Start or fix the OpenAI-compatible model server at ${config.baseUrl}, or rerun with --url <base-url>.`,
+        );
+      }
+    }
     const result = {
       ok: provider.ok,
       version: FORGE_VERSION,
@@ -1311,14 +1336,20 @@ export async function main(
       verify: verification,
       provider,
       recommendation,
+      nextSteps,
     };
     if (options["json"] === true) io.out(JSON.stringify(result, null, 2));
     else {
       io.out(`✓ Forge ${FORGE_VERSION} on ${process.version}`);
       io.out(`✓ repository ${root}`);
       io.out(
+        projectResult.source === null
+          ? "! config detected defaults; forge.json has not been created"
+          : `✓ config ${path.relative(root, projectResult.source) || "forge.json"}`,
+      );
+      io.out(
         verification.length === 0
-          ? "! no verification command detected; run `forge init` or edit forge.json"
+          ? "! no verification command detected"
           : `✓ verifier ${verification.map((item) => item.join(" ")).join(", ")}`,
       );
       if (provider.ok) {
@@ -1335,10 +1366,9 @@ export async function main(
         );
       }
       if (recommendation.recommended !== null && recommendation.reason !== null) {
-        io.out(
-          `! ${recommendation.reason}; adopt it with --profile ${recommendation.recommended} or set "profile" in forge.json`,
-        );
+        io.out(`! ${recommendation.reason}`);
       }
+      for (const step of nextSteps) io.out(`→ next: ${step}`);
     }
     return result.ok ? 0 : 2;
   }
