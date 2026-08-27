@@ -184,7 +184,7 @@ describe("release automation", () => {
   test("creates reviewed releases and publishes them through npm OIDC", () => {
     const workflow = readFileSync(".github/workflows/release.yml", "utf8");
 
-    expect(workflow).toContain("googleapis/release-please-action@v4");
+    expect(workflow).toContain("googleapis/release-please-action@v5");
     expect(workflow).toContain("id-token: write");
     expect(workflow).toContain("steps.release.outputs.release_created");
     expect(workflow).toContain("node-version: 24");
