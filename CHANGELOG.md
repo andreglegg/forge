@@ -4,6 +4,10 @@ All notable product changes are recorded here. Forge follows semantic versioning
 
 ## Unreleased
 
+_No changes yet._
+
+## 0.1.0 — 2026-08-27
+
 ### Added
 
 - Bounded retry budgets for a failing completion gate, with per-failure-class limits and a no-progress stop when a failure repeats unchanged. A stopped run is always a failed run.
@@ -39,9 +43,7 @@ Found by driving Forge through a real ten-session build with a 14B model; see `b
 
 - The verification gate returns its report alongside its objection so retries can be budgeted against what actually failed.
 
-## 0.1.0 — 2026-08-04
-
-### Added
+### Initial alpha foundation
 
 - Installable `forge` npm binary metadata.
 - `forge --version` and `forge version`.
@@ -78,8 +80,8 @@ Found by driving Forge through a real ten-session build with a 14B model; see `b
 
 ### Known limitations
 
-- No OS-level process, network, or resource sandbox; Git-worktree isolation protects repository mutations only.
+- Host and Git-worktree execution do not provide process or network isolation. The Docker/Podman backend is opt-in and inherits the security properties of the selected runtime and image.
 - Static relationships do not yet resolve package imports, path aliases, or package exports. `CALLERS` is limited to checker-visible direct calls and constructors; dynamic dispatch, reflection, inferred runtime targets, and untyped calls remain unsupported.
-- No MCP, general plugin, interactive-hook, or remote-worker API.
+- Stdio MCP tools and one fail-closed extension lifecycle point are shipped; broader plugin, interactive-hook, IDE, and remote-worker APIs are not.
 - Session resume restores observable history but not an in-flight provider request.
 - Isolation is opt-in and currently available only for headless workspace-mode runs from a fully clean Git root.

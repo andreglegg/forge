@@ -2,6 +2,15 @@
   "name": "forge-agent",
   "version": "0.1.0",
   "description": "Local-first coding agent CLI optimized for local and small language models.",
+  "author": "Andre Glegg",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/andreglegg/forge.git"
+  },
+  "homepage": "https://github.com/andreglegg/forge#readme",
+  "bugs": {
+    "url": "https://github.com/andreglegg/forge/issues"
+  },
   "type": "module",
   "license": "Apache-2.0",
   "bin": {
@@ -13,6 +22,7 @@
     "README.md",
     "USING_FORGE.md",
     "LICENSE",
+    "NOTICE",
     "CHANGELOG.md",
     "docs/ARCHITECTURE.md",
     "docs/PRODUCT_PLAN.md",
@@ -30,7 +40,8 @@
     "node": ">=22.12.0"
   },
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",

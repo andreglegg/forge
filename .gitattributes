@@ -1,0 +1,2 @@
+# Benchmark repositories are test fixtures, not Forge's implementation.
+bench/** linguist-vendored

@@ -7,7 +7,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PROJECT_DIR}/legacy/python-harness/scripts/claude-guard.py\"",
+            "command": "node \"${CLAUDE_PROJECT_DIR}/scripts/claude-guard.mjs\"",
             "timeout": 10
           }
         ]

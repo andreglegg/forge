@@ -9,7 +9,7 @@ coverage/
 graphify-out/
 jobs/
 
-# legacy/python-harness
+# Cross-language benchmark and local tool artifacts
 .venv/
 __pycache__/
 *.py[cod]
@@ -22,3 +22,4 @@ forge.yaml
 tmp_test_junit*/
 forge-junit-*.xml
 .codex-bridge/
+/uv.lock

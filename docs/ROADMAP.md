@@ -13,27 +13,28 @@ This roadmap applies to the current TypeScript product. See `STATUS.md` for the 
 - Opt-in detached Git-worktree execution, retained binary patches, and verified conflict-checked promotion.
 - Named model profiles, evidence-preserving compaction, promotion risk scanning, and explicit bounded headless lifecycle hooks.
 - Git-aware project navigation plus bounded static TypeScript/JavaScript dependency, dependent, package, and related-test relationships.
+- Revision-bound symbols, references, direct callers, dependency-backed context, and change-aware focused verification.
+- Failure-class retry budgets with a deterministic no-progress stop.
+- Optional Docker/Podman execution with network-off and resource-bounded defaults.
+- Versioned stream/stdio server contracts, a fail-closed `beforeCompletion` extension point, permissioned stdio MCP tools, project skills, and verification adapters.
+- GitHub issue import and verified isolated draft-PR publication.
 - Current architecture, security, product-plan, and operations documentation.
 
-## 0.2 trusted daily use
+## 0.2 deeper project intelligence
 
-- TypeScript/JavaScript symbol declarations, exact references, and dependency-backed context selection on top of shipped relative module relationships.
-- Change-impact analysis and focused development verification while preserving the authoritative completion gate.
-- Execution-backend interface with optional Docker/Podman isolation.
-- Network-off defaults and resource limits for sandbox backends.
-- Stronger semantic compaction and compaction telemetry on top of the shipped deterministic evidence guard.
-- Failure-class-specific retries.
-- Automatic capability-aware profile recommendations on top of shipped named profiles.
-- Deeper dependency-confusion and secret analysis on top of shipped patch heuristics.
+- Resolve TypeScript path aliases, package imports, package exports, and workspace package boundaries.
+- Add Python and Go symbol/reference adapters without weakening revision binding.
+- Expand focused verification beyond deterministic Node test commands.
+- Measure bounded retry recovery rate and false-success rate on retained real repositories.
+- Make isolated execution the recommended unattended default after broader Docker/Podman validation.
 
-## 0.3 integration surface
+## 0.3 integration maturity
 
-- Versioned general extension API and interactive lifecycle hooks: v1.0 ships with the `beforeCompletion` point (opt-in `--extensions`, fail-closed subprocess protocol, contract 1.3 audit events); remaining lifecycle points stay headless repository-command hooks.
-- MCP client support through Forge permissions, timeouts, output bounds, and audit events.
-- Small skill and verification-adapter API.
-- Stable stream protocol and server mode for IDEs and local automation.
-- GitHub issue and pull-request workflows: the first slice has shipped (`--from-issue` task import and draft-PR publication from verified isolated runs); re-run PR updates, comments, reviews, and Enterprise hosts remain open.
-- Read-only research subagents for independent repository investigation.
+- Extend the API beyond the shipped fail-closed `beforeCompletion` point without adding an approval bypass.
+- Add MCP transports, resources, and prompts only through equivalent permission, timeout, output, and audit boundaries.
+- Add a documented IDE client contract on top of the shipped stream and stdio server protocol.
+- Extend GitHub workflows to safe PR updates, comments, reviews, and Enterprise hosts.
+- Add read-only investigation workers that return bounded evidence rather than mutations.
 
 ## 1.0 exit criteria
 

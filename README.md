@@ -1,14 +1,21 @@
 # forge — a coding agent for local and small models
 
-A chat-first coding agent CLI, and the whole of Forge. Earlier attempts — a
-Python orchestration harness and a first TypeScript pass — are archived under
-[`legacy/`](legacy/) and share no code with this.
+<p align="center">
+  <img src="docs/assets/forge-wordmark.png" alt="Forge" width="420">
+</p>
+
+[![CI](https://github.com/andreglegg/forge/actions/workflows/ci.yml/badge.svg)](https://github.com/andreglegg/forge/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/forge-agent)](https://www.npmjs.com/package/forge-agent)
+[![license](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+
+A local-first, chat-first coding-agent CLI written in TypeScript and optimized
+for local and small language models.
 
 **New here? Read [`USING_FORGE.md`](USING_FORGE.md).**
 
 ## Install
 
-Forge requires Node.js 22.12 or newer. From a published package:
+Forge requires Node.js 22.12 or newer. From npm:
 
 ```sh
 npm install --global forge-agent
@@ -24,7 +31,14 @@ npm run build
 node bin/forge --version
 ```
 
-The npm package is currently a **0.1 public alpha**. See [`docs/STATUS.md`](docs/STATUS.md) for the exact shipped/planned boundary, [`docs/PRODUCT_PLAN.md`](docs/PRODUCT_PLAN.md) for the ordered product milestones, and [`docs/SECURITY.md`](docs/SECURITY.md) before using autonomous approval on valuable code.
+Forge is a **0.1 public alpha**. See [`docs/STATUS.md`](docs/STATUS.md) for the exact shipped/planned boundary, [`docs/PRODUCT_PLAN.md`](docs/PRODUCT_PLAN.md) for the ordered product milestones, and [`docs/SECURITY.md`](docs/SECURITY.md) before using autonomous approval on valuable code.
+
+Forge never silently updates a global installation. Check the installed version
+with `forge --version` and upgrade explicitly with:
+
+```sh
+npm install --global forge-agent@latest
+```
 
 ## Status
 
@@ -56,6 +70,14 @@ The honest caveat: the pty test that drives the approval prompt through a real
 terminal **skips** where no controlling terminal is available — including the
 shell it was developed in. On such a machine that one path is genuinely
 unverified, and the test says so rather than passing emptily.
+
+## Development approach
+
+Forge is designed, maintained, and evaluated by Andre Glegg using AI-assisted
+development under a test-first, benchmark-gated workflow. The maintainer owns
+the architecture, safety constraints, evaluation methodology, and release
+decisions. Contributions are judged by observable behavior, tests, security
+invariants, and reproducible evidence—not by who or what typed the first draft.
 
 ## The instrument
 

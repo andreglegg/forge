@@ -29,10 +29,7 @@ function credentialFixture(...parts: readonly string[]): string {
 }
 
 const SECRET_CODES = new Set(["likely_secret", "high_entropy_secret"]);
-const HIGH_ENTROPY_TOKEN = credentialFixture(
-  "R9kQzXw2mL7pTnVb5cHdJ8sYfE3u",
-  "AgN6iKoM1rZxWq0",
-);
+const HIGH_ENTROPY_TOKEN = credentialFixture("R9kQzXw2mL7pTnVb5cHdJ8sYfE3u", "AgN6iKoM1rZxWq0");
 
 describe("patch risk scanning", () => {
   test("warns when dependency metadata changes", () => {

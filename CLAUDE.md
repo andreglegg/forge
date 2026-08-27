@@ -19,9 +19,9 @@ Build a production-grade, provider-neutral coding-agent harness that improves th
 
 ## Architecture boundaries
 
-Forge is the TypeScript agent at the repository root. `src/` is its source;
-`bin/forge` runs the built `dist/`. The Python harness and the earlier TS
-attempt are archived under `legacy/` and are not maintained.
+Forge is the TypeScript agent at the repository root. `src/` is its source and
+`bin/forge` runs the built `dist/`. Cross-language files under `bench/` are
+evaluation fixtures, not alternate implementations.
 
 - `provider.ts`: provider transport only.
 - `protocol.ts` / `codecs.ts`: the text action protocol and its decoders.
@@ -50,10 +50,10 @@ attempt are archived under `legacy/` and are not maintained.
 
 ## Initial priorities
 
-Read `CLAUDE_HANDOFF.md` for current state and open work, and `bench/` for what
-has been measured. Do not jump to distributed execution, fine-tuning, a GUI, or
-arbitrary MCP access before the safety, evaluation, and resumability foundations
-are solid.
+Read `docs/STATUS.md`, `docs/ROADMAP.md`, and `bench/` for current state and
+measured evidence. Do not jump to distributed execution, fine-tuning, a GUI, or
+broader external-tool access before the safety, evaluation, and resumability
+foundations are solid.
 
 Measurement discipline: the 42-case screen has about +/-5 cases of run-to-run
 variance, so prefer the mechanism over the score gap, or use the full 225. Two

@@ -24,7 +24,7 @@ Goal: give small models enough deterministic repository understanding to make co
 2. Relative module dependency graph with inbound dependents, outbound dependencies, package ownership, and related tests. **Shipped.**
 3. Revision-bound TypeScript/JavaScript declarations, syntax references, and checker-resolved direct callers. **Shipped.** Python and Go adapters remain planned.
 4. Evidence-triggered semantic context assembly using exact symbols, direct callers, syntax references, and module dependencies. **Shipped for explicitly named TypeScript/JavaScript symbols.**
-5. Change-impact analysis that maps modified files to affected packages and candidate tests.
+5. Change-impact analysis that maps modified files to affected packages and candidate tests. **Shipped for deterministic Node test commands.**
 6. Read-only investigation workers that return evidence rather than mutations.
 
 ### B. Reliable execution
@@ -32,21 +32,21 @@ Goal: give small models enough deterministic repository understanding to make co
 Goal: make every attempted change bounded, recoverable, independently checked, and able to improve after a failure.
 
 1. Transactional files, commands, sessions, undo, verification, and isolated Git promotion. **Shipped.**
-2. Failure-class-specific recovery guidance for syntax, type, test, timeout, toolchain, infrastructure, flaky, and unknown verification failures. **Shipped.** Bounded automatic retry execution and no-progress recovery remain planned.
+2. Failure-class-specific recovery guidance and retry budgets for syntax, type, test, timeout, toolchain, infrastructure, flaky, and unknown verification failures. **Shipped, including deterministic no-progress stopping.**
 3. Verification planning: focused checks during development, authoritative project gates before completion. **Shipped for deterministic Node test commands.**
-4. Execution-backend interface separating host, Git-worktree, and container execution.
-5. Optional Docker/Podman backend with network-off default, restricted user, read-only host mounts, and CPU/memory/process/disk limits.
-6. Stronger dependency-confusion, secret, workflow, and generated-file analysis before promotion.
+4. Execution-backend interface separating host, Git-worktree, and container execution. **Shipped.**
+5. Optional Docker/Podman backend with network-off default, repository-only mounts, a read-only container root, and CPU/memory/process/tmpfs limits. **Shipped.**
+6. Stronger dependency-confusion, secret, workflow, and generated-file analysis before promotion. **Shipped for the documented tier-2 deterministic scan; broader analysis remains planned.**
 
 ### C. Integration surface
 
 Goal: make Forge usable from terminals, editors, local automation, and external tool ecosystems without bypassing its safety model.
 
-1. Versioned stream/result protocol and long-running local server mode.
+1. Versioned stream/result protocol and long-running local server mode. **Shipped over stdio NDJSON.**
 2. IDE client contract for tasks, approvals, events, diffs, verification, resume, and cancellation.
-3. MCP client support routed through Forge permissions, timeout/output bounds, and audit events.
-4. Small versioned extension API for skills, repository analyzers, and verification adapters.
-5. GitHub issue and pull-request workflows built on isolated execution and explicit promotion.
+3. MCP client support routed through Forge permissions, timeout/output bounds, and audit events. **Shipped for stdio tools.**
+4. Small versioned extension API for skills, repository analyzers, and verification adapters. **First slice shipped: project skills, verification adapters, and `beforeCompletion`.**
+5. GitHub issue and pull-request workflows built on isolated execution and explicit promotion. **First slice shipped: issue import and fresh verified draft PRs.**
 
 ### D. Release maturity
 
@@ -94,19 +94,19 @@ Exit reached for the supported boundary: Forge identifies affected packages/test
 
 - Classify verification failures into syntax, type, test, timeout, toolchain, infrastructure, flaky, and unknown classes. **Shipped.**
 - Attach one bounded class-specific recovery directive to model feedback. **Shipped.**
-- Add action/no-progress classification and automatic bounded retry execution. **Planned.**
-- Stop retries on infrastructure failures, repeated unchanged actions, or exhausted evidence. **Planned.**
-- Measure recovery rate and false-success rate.
+- Add action/no-progress classification and automatic bounded retry execution. **Shipped for verification-gate failures.**
+- Stop retries on repeated unchanged verification output or exhausted per-class budgets. **Shipped.**
+- Measure recovery rate and false-success rate. **Planned.**
 
-Exit: retries are mechanism-driven rather than a generic fresh prompt.
+Exit reached for verification-gate recovery: retries are mechanism-driven rather than a generic fresh prompt. Broader action-loop recovery measurement remains planned.
 
 ### Milestone 5 — isolated execution backends
 
-- Introduce an execution-backend interface without changing Run semantics.
-- Keep the current host and Git-worktree implementations.
-- Add an optional container backend with restrictive defaults and explicit capability reporting.
+- Introduce an execution-backend interface without changing Run semantics. **Shipped.**
+- Keep the current host and Git-worktree implementations. **Shipped.**
+- Add an optional container backend with restrictive defaults and explicit capability reporting. **Shipped for Docker and Podman.**
 
-Exit: autonomous commands can run without inheriting unrestricted host process and network access.
+Exit reached as an opt-in boundary: autonomous commands can run without inheriting unrestricted host process and network access. Default-isolated unattended execution remains a 1.0 criterion.
 
 ### Milestone 6 — stable service boundary
 
@@ -135,8 +135,8 @@ Each pass must inspect the latest repository state, preserve unrelated work, imp
 5. Dependency-backed automatic context selection. **Completed.**
 6. Change-impact model and focused verification execution. **Completed for deterministic Node test commands.**
 7. Verification failure classification and one bounded recovery directive. **Completed.** Automatic retry execution and no-progress classification remain.
-8. Execution-backend interface around existing host/worktree behavior.
-9. Versioned server/event contract foundation.
+8. Execution-backend interface around existing host/worktree behavior. **Completed.**
+9. Versioned server/event contract foundation. **Completed.**
 
 ## 1.0 product exit criteria
 

@@ -1,6 +1,7 @@
 # Forge architecture
 
-This document describes the current TypeScript product. Historical Python designs live under `legacy/` and are not part of the executable.
+This document describes the current TypeScript product. Cross-language files in
+`bench/` are evaluation fixtures and are not part of the Forge executable.
 
 ## Product boundary
 
