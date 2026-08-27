@@ -1,14 +1,14 @@
-# forge — a coding agent for local and small models
+# forge — a coding-agent harness for local and small models
 
 <p align="center">
   <img src="docs/assets/forge-wordmark.png" alt="Forge" width="420">
 </p>
 
 [![CI](https://github.com/andreglegg/forge/actions/workflows/ci.yml/badge.svg)](https://github.com/andreglegg/forge/actions/workflows/ci.yml)
-[![npm](https://img.shields.io/npm/v/forge-agent)](https://www.npmjs.com/package/forge-agent)
+[![npm](https://img.shields.io/npm/v/%40aglegg%2Fforge-harness)](https://www.npmjs.com/package/@aglegg/forge-harness)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-A local-first, chat-first coding-agent CLI written in TypeScript and optimized
+A local-first, chat-first coding-agent harness written in TypeScript and optimized
 for local and small language models.
 
 **New here? Read [`USING_FORGE.md`](USING_FORGE.md).**
@@ -18,7 +18,7 @@ for local and small language models.
 Forge requires Node.js 22.12 or newer. From npm:
 
 ```sh
-npm install --global forge-agent
+npm install --global @aglegg/forge-harness
 forge --version
 forge doctor
 ```
@@ -37,7 +37,7 @@ Forge never silently updates a global installation. Check the installed version
 with `forge --version` and upgrade explicitly with:
 
 ```sh
-npm install --global forge-agent@latest
+npm install --global @aglegg/forge-harness@latest
 ```
 
 ## Status

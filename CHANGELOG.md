@@ -6,6 +6,17 @@ All notable product changes are recorded here. Forge follows semantic versioning
 
 _No changes yet._
 
+## 0.1.1 — 2026-08-27
+
+### Changed
+
+- Publish Forge under the scoped npm package name `@aglegg/forge-harness`; the installed executable remains `forge`.
+- Describe Forge as a coding-agent harness to better reflect its orchestration, verification, isolation, retry, and evaluation role.
+
+### Fixed
+
+- Replace the rejected unscoped `forge-agent` npm identity. npm blocked that name as too similar to an existing package before `0.1.0` could be published.
+
 ## 0.1.0 — 2026-08-27
 
 ### Added
