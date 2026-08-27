@@ -22,8 +22,9 @@ async function withRepository<T>(body: (root: string) => Promise<T>): Promise<T>
   git(root, "config", "user.email", "forge-tests@example.invalid");
   git(root, "config", "user.name", "Forge Tests");
   writeFileSync(path.join(root, ".gitignore"), ".forge/\n");
+  writeFileSync(path.join(root, ".gitattributes"), "* text=auto eol=lf\n");
   writeFileSync(path.join(root, "app.txt"), "original\n");
-  git(root, "add", ".gitignore", "app.txt");
+  git(root, "add", ".gitattributes", ".gitignore", "app.txt");
   git(root, "commit", "-m", "initial");
   try {
     return await body(root);

@@ -31,6 +31,7 @@ async function repository(change: ScriptedChange = NOTE_CHANGE): Promise<string>
   git(root, "config", "user.email", "forge-tests@example.invalid");
   git(root, "config", "user.name", "Forge Tests");
   writeFileSync(path.join(root, ".gitignore"), ".forge/\n");
+  writeFileSync(path.join(root, ".gitattributes"), "* text=auto eol=lf\n");
   writeFileSync(path.join(root, change.file), change.before);
   writeFileSync(
     path.join(root, "forge.json"),
@@ -48,7 +49,7 @@ async function repository(change: ScriptedChange = NOTE_CHANGE): Promise<string>
       2,
     )}\n`,
   );
-  git(root, "add", ".gitignore", change.file, "forge.json");
+  git(root, "add", ".gitattributes", ".gitignore", change.file, "forge.json");
   git(root, "commit", "-m", "initial");
   return root;
 }
