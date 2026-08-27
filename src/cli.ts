@@ -171,7 +171,7 @@ export const consoleIO: IO = {
 };
 
 const USAGE = [
-  "forge — a coding agent for local and small models",
+  "forge — a coding-agent harness for local and small models",
   "",
   "  forge                    interactive chat in the current directory",
   "  forge run <task>         one shot, exits 0 on success",
@@ -191,7 +191,6 @@ const USAGE = [
   "  forge bench [suite]      run a task suite and judge it independently",
   "  forge polyglot <dataset> run/resume the full Aider Polyglot benchmark",
   "  forge compare <a> <b>    paired comparison of two Polyglot report.json files",
-  "  forge compare-little-coder <forge> <little-coder> <cases>",
   '      --agent "<cmd {task}>"  bench another agent on the same tasks',
   "      --trials <n>         repeat the suite n times and report the spread",
   "      --name <label>       stable subject label written into the report",

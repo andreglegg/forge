@@ -28,6 +28,24 @@ async function withRepo<T>(body: (root: string) => Promise<T>): Promise<T> {
   }
 }
 
+describe("product help", () => {
+  test("presents Forge as a harness without advertising benchmark-specific comparators", async () => {
+    const help = capturedIO();
+    const helpCode = await main(["help"], help.io);
+    const comparator = capturedIO();
+    const comparatorCode = await main(["compare-little-coder"], comparator.io);
+
+    expect(helpCode).toBe(0);
+    expect(help.out.join("\n")).toContain("coding-agent harness");
+    expect(help.out.join("\n")).toContain("forge compare <a> <b>");
+    expect(help.out.join("\n")).not.toMatch(/little[ -]coder/i);
+    expect(help.err).toEqual([]);
+
+    expect(comparatorCode).toBe(2);
+    expect(comparator.err.join("\n")).toMatch(/needs Forge report, Little Coder report/i);
+  });
+});
+
 describe("project configuration", () => {
   test("initializes a project with its detected verification command", async () => {
     await withRepo(async (root) => {
