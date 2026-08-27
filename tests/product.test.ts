@@ -166,6 +166,12 @@ describe("release automation", () => {
     expect(workflow).not.toContain("pytest");
   });
 
+  test("checks out formatted text with LF line endings on every runner", () => {
+    const attributes = readFileSync(".gitattributes", "utf8");
+
+    expect(attributes).toMatch(/^\* text=auto eol=lf$/m);
+  });
+
   test("creates reviewed releases and publishes them through npm OIDC", () => {
     const workflow = readFileSync(".github/workflows/release.yml", "utf8");
 
