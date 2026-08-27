@@ -6,6 +6,13 @@ All notable product changes are recorded here. Forge follows semantic versioning
 
 _No changes yet._
 
+## [0.2.1](https://github.com/andreglegg/forge/compare/v0.2.0...v0.2.1) (2026-08-27)
+
+
+### Bug Fixes
+
+* harden first-run and published package checks ([#13](https://github.com/andreglegg/forge/issues/13)) ([edfb730](https://github.com/andreglegg/forge/commit/edfb73090b9bee5ef7a13df500adcb725dddf661))
+
 ## [0.2.0](https://github.com/andreglegg/forge/compare/v0.1.2...v0.2.0) (2026-08-27)
 
 
