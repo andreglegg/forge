@@ -82,6 +82,17 @@ describe("public package contract", () => {
     expect(out).toEqual([FORGE_VERSION]);
     expect(err).toEqual([]);
   });
+
+  test("ships the guarded global npm updater through the executable bootstrap", () => {
+    const binary = readFileSync("bin/forge", "utf8");
+    const readme = readFileSync("README.md", "utf8");
+
+    expect(binary).toContain('await import("../dist/update.js")');
+    expect(binary).toContain('argv[0] === "update"');
+    expect(readme).toContain("forge update");
+    expect(readme).toContain("FORGE_AUTO_UPDATE=0");
+    expect(readme).toContain("Source checkouts, project-local installs, `npx`, and CI are never");
+  });
 });
 
 async function readConfig(config: unknown): Promise<ProjectConfigResult> {

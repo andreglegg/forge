@@ -22,6 +22,7 @@ This roadmap applies to the current TypeScript product. See `STATUS.md` for the 
 
 ## 0.2 deeper project intelligence
 
+- Global npm installs self-update to the exact latest compatible stable release, with a bounded registry check, explicit `forge update`, and an opt-out.
 - Resolve TypeScript path aliases, package imports, package exports, and workspace package boundaries.
 - Add Python and Go symbol/reference adapters without weakening revision binding.
 - Expand focused verification beyond deterministic Node test commands.

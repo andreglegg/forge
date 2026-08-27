@@ -20,7 +20,8 @@ This table describes the executable TypeScript product in `src/`.
 | Evidence-preserving compaction | Shipped | Long transcripts retain stable setup, newest turns, prior failures, source locations, and explicit user constraints under a deterministic character budget. |
 | Decoder replay | Shipped | Offline conversion/repair measurement from retained traces. |
 | Benchmark and Polyglot adapters | Shipped | Reproducible identities, resume, comparisons, infrastructure classification. |
-| npm package | Alpha | Package metadata, cross-platform CI, reviewed version PRs, GitHub Releases, and OIDC npm publication are configured. The first npm publication remains a one-time maintainer bootstrap. |
+| npm package | Alpha | Package metadata, cross-platform CI, reviewed version PRs, GitHub Releases, trusted OIDC npm publication, and provenance are live. |
+| Global npm self-update | Shipped | Proven global npm installs check at most every 12 hours and install an exact newer compatible stable version before loading the CLI. `forge update` forces a check; `FORGE_AUTO_UPDATE=0` opts out. Source, local, npx, CI, offline, and failed-update paths never become startup blockers. |
 | Doctor/init/config commands | Shipped | Strict `forge.json` validation, idempotent initialization, resolved config output, verifier detection, and live provider/model diagnostics. |
 | Named model profiles | Shipped | Project profiles carry endpoint, model, context/output budgets, temperature, native protocol, and turn budget; explicit CLI/environment values override them. `forge doctor` advisorily reports which configured profile best fits what the endpoint advertises; adoption stays an explicit user action. |
 | Read-only/plan permission modes | Shipped | Enforced by the Run actor before preview, approval, or execution; `--yes` cannot bypass them. |
