@@ -31,10 +31,17 @@ npm run build
 node bin/forge --version
 ```
 
-Forge is a **0.1 public alpha**. See [`docs/STATUS.md`](docs/STATUS.md) for the exact shipped/planned boundary, [`docs/PRODUCT_PLAN.md`](docs/PRODUCT_PLAN.md) for the ordered product milestones, and [`docs/SECURITY.md`](docs/SECURITY.md) before using autonomous approval on valuable code.
+Forge is a **public alpha**. See [`docs/STATUS.md`](docs/STATUS.md) for the exact shipped/planned boundary, [`docs/PRODUCT_PLAN.md`](docs/PRODUCT_PLAN.md) for the ordered product milestones, and [`docs/SECURITY.md`](docs/SECURITY.md) before using autonomous approval on valuable code.
 
-Forge never silently updates a global installation. Check the installed version
-with `forge --version` and upgrade explicitly with:
+Global npm installs check the npm registry for a newer stable Forge release at
+most once every 12 hours. When a compatible update exists, Forge installs that
+exact version before loading the CLI, so the current invocation continues on the
+new build. Source checkouts, project-local installs, `npx`, and CI are never
+self-modified; an offline or failed update check never blocks Forge.
+
+Force a check with `forge update`. Disable automatic checks with
+`FORGE_AUTO_UPDATE=0`. If a self-update cannot be applied, the recovery command
+is still:
 
 ```sh
 npm install --global @aglegg/forge-harness@latest
@@ -123,6 +130,7 @@ forge doctor              provider/model/verifier diagnostics
 forge init                create an idempotent forge.json
 forge config --json       resolved configuration
 forge profiles            list named local-model profiles
+forge update              force an npm update check for global installs
 forge continue [id]       reopen interactive chat with retained history
 forge replay              score the decoder on everything recorded here
 forge sessions            what has been run here

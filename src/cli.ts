@@ -183,6 +183,7 @@ const USAGE = [
   "  forge init               create an idempotent forge.json",
   "  forge config             print resolved configuration",
   "  forge profiles           list named model profiles",
+  "  forge update             force an npm update check for global installs",
   "  forge replay [path]      score the decoder on recorded turns — offline, free",
   "  forge contract           the event-stream contract clients read",
   "  forge sessions           what has been run here",

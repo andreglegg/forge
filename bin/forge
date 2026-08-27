@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // The only place process.exit appears.
-import { existsSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -26,5 +26,23 @@ if (
   process.exit(2);
 }
 
-import { main } from "../dist/cli.js";
-process.exit(await main(process.argv.slice(2)));
+const argv = process.argv.slice(2);
+const manifest = JSON.parse(readFileSync(path.join(project, "package.json"), "utf8"));
+const currentVersion = typeof manifest.version === "string" ? manifest.version : "0.0.0";
+const { bootstrapUpdate } = await import("../dist/update.js");
+const update = await bootstrapUpdate({
+  packageRoot: project,
+  currentVersion,
+  force: argv[0] === "update",
+  io: {
+    out: (text) => process.stdout.write(`${text}\n`),
+    err: (text) => process.stderr.write(`${text}\n`),
+  },
+});
+if (update.handled) process.exit(update.code);
+
+// The updater runs before cli.js is imported. A successful global npm update
+// therefore replaces dist/ first, and this invocation loads the new CLI rather
+// than mixing old and new runtime modules.
+const { main } = await import("../dist/cli.js");
+process.exit(await main(argv));

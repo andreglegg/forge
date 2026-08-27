@@ -38,6 +38,7 @@ describe("product help", () => {
     expect(helpCode).toBe(0);
     expect(help.out.join("\n")).toContain("coding-agent harness");
     expect(help.out.join("\n")).toContain("forge compare <a> <b>");
+    expect(help.out.join("\n")).toContain("forge update");
     expect(help.out.join("\n")).not.toMatch(/little[ -]coder/i);
     expect(help.err).toEqual([]);
 

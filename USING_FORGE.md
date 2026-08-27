@@ -3,6 +3,15 @@
 Practical guide. What it does well, what it does badly, and how to drive it
 without getting hurt. Everything here is backed by measurements in `bench/`.
 
+## Install and updates
+
+Install the public package globally with `npm install --global @aglegg/forge-harness`.
+A proven global npm install checks for a newer stable release at most once every
+12 hours and installs an exact compatible version before loading the CLI. Use
+`forge update` to force a check or set `FORGE_AUTO_UPDATE=0` to disable automatic
+checks. Source checkouts, project-local installs, `npx`, and CI are never
+self-modified, and update/network failures never block a normal Forge startup.
+
 ## 1. Point it at a model
 
 Forge talks to any OpenAI-compatible endpoint and asks `/v1/models` what is
@@ -129,6 +138,7 @@ forge doctor                   # provider/model/verifier health
 forge init                     # create forge.json from detected checks
 forge config --json            # resolved project/profile/provider settings
 forge profiles                 # list named local-model profiles
+forge update                   # force an npm update check
 forge sessions                 # what has been run here
 forge show <id>                # replay a recorded session
 forge undo [id]                # put back what a session changed
