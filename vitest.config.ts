@@ -19,6 +19,7 @@ export default defineConfig({
     // process, a cwd, or an environment with each other.
     pool: "threads",
     isolate: true,
+    maxWorkers: 4,
 
     // Real subprocesses (git, the verifier, the syntax validator) are slower
     // to spawn under Node than under CPython. These bounds are for a test that

@@ -209,6 +209,8 @@ function stubOnPath(config: { response?: string } = {}): GhStub {
   return stub;
 }
 
+const testWithPosixGhStub = test.skipIf(process.platform === "win32");
+
 function trackRepo(root: string): void {
   cleanup.push(async () => rm(root, { recursive: true, force: true }));
 }
@@ -240,50 +242,54 @@ interface ResultDocument {
 }
 
 describe("GitHub issue tasks", () => {
-  test("feeds a fetched issue and positional guidance into the provider prompt", async () => {
-    const issue = {
-      number: 7,
-      title: "note.txt is stale",
-      body: "note.txt should say new instead of old.",
-      state: "OPEN",
-      url: "https://github.com/octo/demo/issues/7",
-    };
-    const stub = stubOnPath({ response: JSON.stringify(issue) });
-    const root = await repository();
-    trackRepo(root);
-    const provider = await scriptedProvider();
-    trackServer(provider);
+  testWithPosixGhStub(
+    "feeds a fetched issue and positional guidance into the provider prompt",
+    async () => {
+      const issue = {
+        number: 7,
+        title: "note.txt is stale",
+        body: "note.txt should say new instead of old.",
+        state: "OPEN",
+        url: "https://github.com/octo/demo/issues/7",
+      };
+      const stub = stubOnPath({ response: JSON.stringify(issue) });
+      const root = await repository();
+      trackRepo(root);
+      const provider = await scriptedProvider();
+      trackServer(provider);
 
-    const captured = capturedIO();
-    const code = await main(
-      [
-        "run",
-        "Prefer the smallest change.",
-        "--repo",
-        root,
-        "--url",
-        provider.url,
-        "--model",
-        "scripted",
-        "--from-issue",
-        "7",
-        "--yes",
-        "--json",
-      ],
-      captured.io,
-    );
+      const captured = capturedIO();
+      const code = await main(
+        [
+          "run",
+          "Prefer the smallest change.",
+          "--repo",
+          root,
+          "--url",
+          provider.url,
+          "--model",
+          "scripted",
+          "--from-issue",
+          "7",
+          "--yes",
+          "--json",
+        ],
+        captured.io,
+      );
 
-    expect(code).toBe(0);
-    expect(stub.invocations()).toEqual([
-      ["issue", "view", "7", "--json", "number,title,body,state,url"],
-    ]);
-    const prompt = provider.userMessages.find((message) =>
-      message.includes("GitHub issue #7: note.txt is stale"),
-    );
-    expect(prompt).toBeDefined();
-    expect(prompt).toContain(issue.body);
-    expect(prompt).toContain("Additional guidance from the user:\nPrefer the smallest change.");
-  }, 30_000);
+      expect(code).toBe(0);
+      expect(stub.invocations()).toEqual([
+        ["issue", "view", "7", "--json", "number,title,body,state,url"],
+      ]);
+      const prompt = provider.userMessages.find((message) =>
+        message.includes("GitHub issue #7: note.txt is stale"),
+      );
+      expect(prompt).toBeDefined();
+      expect(prompt).toContain(issue.body);
+      expect(prompt).toContain("Additional guidance from the user:\nPrefer the smallest change.");
+    },
+    30_000,
+  );
 });
 
 describe("publication refusals", () => {
@@ -446,61 +452,65 @@ describe("publication refusals", () => {
 });
 
 describe("draft pull request publication", () => {
-  test("publishes a verified isolated run as one fresh draft branch and PR", async () => {
-    const stub = stubOnPath();
-    const root = await repository();
-    trackRepo(root);
-    const bare = bareOrigin(root);
-    cleanup.push(async () => rm(bare, { recursive: true, force: true }));
-    const provider = await scriptedProvider();
-    trackServer(provider);
+  testWithPosixGhStub(
+    "publishes a verified isolated run as one fresh draft branch and PR",
+    async () => {
+      const stub = stubOnPath();
+      const root = await repository();
+      trackRepo(root);
+      const bare = bareOrigin(root);
+      cleanup.push(async () => rm(bare, { recursive: true, force: true }));
+      const provider = await scriptedProvider();
+      trackServer(provider);
 
-    const captured = capturedIO();
-    const code = await main(
-      [
-        "run",
-        "Change note.txt from old to new.",
-        "--repo",
-        root,
-        "--url",
-        provider.url,
-        "--model",
-        "scripted",
-        "--yes",
-        "--isolate",
-        "--pr",
-        "--json",
-      ],
-      captured.io,
-    );
-    const result = JSON.parse(captured.out.join("\n")) as ResultDocument;
+      const captured = capturedIO();
+      const code = await main(
+        [
+          "run",
+          "Change note.txt from old to new.",
+          "--repo",
+          root,
+          "--url",
+          provider.url,
+          "--model",
+          "scripted",
+          "--yes",
+          "--isolate",
+          "--pr",
+          "--json",
+        ],
+        captured.io,
+      );
+      const result = JSON.parse(captured.out.join("\n")) as ResultDocument;
 
-    expect(code).toBe(0);
-    const branch = `forge/${result.session}`;
-    expect(result.github).toMatchObject({
-      requested: true,
-      branch,
-      pushed: true,
-      blocked: null,
-      error: null,
-    });
-    expect(result.github?.pullRequest).toMatch(/^https:\/\//);
-    expect(bareBranches(bare)).toEqual([`refs/heads/${branch}`]);
-    expect(git(bare, "show", `refs/heads/${branch}:note.txt`)).toBe("new");
+      expect(code).toBe(0);
+      const branch = `forge/${result.session}`;
+      expect(result.github).toMatchObject({
+        requested: true,
+        branch,
+        pushed: true,
+        blocked: null,
+        error: null,
+      });
+      expect(result.github?.pullRequest).toMatch(/^https:\/\//);
+      expect(bareBranches(bare)).toEqual([`refs/heads/${branch}`]);
+      expect(git(bare, "show", `refs/heads/${branch}:note.txt`)).toBe("new");
 
-    const prInvocation = stub.invocations().find((argv) => argv[0] === "pr");
-    expect(prInvocation?.slice(0, 5)).toEqual(["pr", "create", "--draft", "--head", branch]);
-    const audit = result.github?.invocations ?? [];
-    expect(audit.length).toBeGreaterThan(0);
-    expect(audit.flatMap((entry) => entry.argv)).not.toContain("--force");
-    expect(stub.invocations().flat()).not.toContain("--force");
+      const prInvocation = stub.invocations().find((argv) => argv[0] === "pr");
+      expect(prInvocation?.slice(0, 5)).toEqual(["pr", "create", "--draft", "--head", branch]);
+      const audit = result.github?.invocations ?? [];
+      expect(audit.length).toBeGreaterThan(0);
+      expect(audit.flatMap((entry) => entry.argv)).not.toContain("--force");
+      expect(stub.invocations().flat()).not.toContain("--force");
 
-    const body = readFileSync(stub.bodyCopy, "utf8");
-    expect(body).toContain(`Session: ${result.session}`);
-    expect(body).not.toMatch(/closes|fixes|resolves/i);
-    // Published, not promoted: the original checkout is untouched.
-    expect(readFileSync(path.join(root, "note.txt"), "utf8")).toBe("old\n");
-  }, 30_000);
+      const body = readFileSync(stub.bodyCopy, "utf8");
+      expect(body).toContain(`Session: ${result.session}`);
+      expect(body).not.toMatch(/closes|fixes|resolves/i);
+      // Published, not promoted: the original checkout is untouched.
+      expect(readFileSync(path.join(root, "note.txt"), "utf8")).toBe("old\n");
+    },
+    30_000,
+  );
 
   test("publishes nothing when verification never passes", async () => {
     const stub = stubOnPath();
@@ -543,52 +553,56 @@ describe("draft pull request publication", () => {
     expect(stub.invocations()).toEqual([]);
   }, 30_000);
 
-  test("blocks a critical-risk patch until --allow-risk and records the override", async () => {
-    const change: ScriptedChange = {
-      file: "config.ts",
-      before: 'export const apiKey = "safe";\n',
-      after: 'export const apiKey = "sk-abcdefghijklmnopqrstuvwxyz123456";\n',
-    };
-    const stub = stubOnPath();
-    const root = await repository(change);
-    trackRepo(root);
-    const bare = bareOrigin(root);
-    cleanup.push(async () => rm(bare, { recursive: true, force: true }));
-    const provider = await scriptedProvider(change);
-    trackServer(provider);
+  testWithPosixGhStub(
+    "blocks a critical-risk patch until --allow-risk and records the override",
+    async () => {
+      const change: ScriptedChange = {
+        file: "config.ts",
+        before: 'export const apiKey = "safe";\n',
+        after: 'export const apiKey = "sk-abcdefghijklmnopqrstuvwxyz123456";\n',
+      };
+      const stub = stubOnPath();
+      const root = await repository(change);
+      trackRepo(root);
+      const bare = bareOrigin(root);
+      cleanup.push(async () => rm(bare, { recursive: true, force: true }));
+      const provider = await scriptedProvider(change);
+      trackServer(provider);
 
-    const base = [
-      "run",
-      "Update config.ts.",
-      "--repo",
-      root,
-      "--url",
-      provider.url,
-      "--model",
-      "scripted",
-      "--yes",
-      "--isolate",
-      "--pr",
-      "--json",
-    ];
+      const base = [
+        "run",
+        "Update config.ts.",
+        "--repo",
+        root,
+        "--url",
+        provider.url,
+        "--model",
+        "scripted",
+        "--yes",
+        "--isolate",
+        "--pr",
+        "--json",
+      ];
 
-    const blocked = capturedIO();
-    const blockedCode = await main(base, blocked.io);
-    const blockedResult = JSON.parse(blocked.out.join("\n")) as ResultDocument;
-    expect(blockedCode).toBe(2);
-    expect(blockedResult.github?.pushed).toBe(false);
-    expect(blockedResult.github?.blocked).toMatch(/critical patch risk/i);
-    expect(bareBranches(bare)).toEqual([]);
-    expect(stub.invocations()).toEqual([]);
-    // The patch survives the refusal for inspection.
-    expect(blockedResult.isolation?.patch).toBeDefined();
+      const blocked = capturedIO();
+      const blockedCode = await main(base, blocked.io);
+      const blockedResult = JSON.parse(blocked.out.join("\n")) as ResultDocument;
+      expect(blockedCode).toBe(2);
+      expect(blockedResult.github?.pushed).toBe(false);
+      expect(blockedResult.github?.blocked).toMatch(/critical patch risk/i);
+      expect(bareBranches(bare)).toEqual([]);
+      expect(stub.invocations()).toEqual([]);
+      // The patch survives the refusal for inspection.
+      expect(blockedResult.isolation?.patch).toBeDefined();
 
-    const overridden = capturedIO();
-    const overriddenCode = await main([...base, "--allow-risk"], overridden.io);
-    const overriddenResult = JSON.parse(overridden.out.join("\n")) as ResultDocument;
-    expect(overriddenCode).toBe(0);
-    expect(overriddenResult.isolation?.riskOverride).toBe(true);
-    expect(overriddenResult.github?.pullRequest).toMatch(/^https:\/\//);
-    expect(bareBranches(bare)).toEqual([`refs/heads/forge/${overriddenResult.session}`]);
-  }, 60_000);
+      const overridden = capturedIO();
+      const overriddenCode = await main([...base, "--allow-risk"], overridden.io);
+      const overriddenResult = JSON.parse(overridden.out.join("\n")) as ResultDocument;
+      expect(overriddenCode).toBe(0);
+      expect(overriddenResult.isolation?.riskOverride).toBe(true);
+      expect(overriddenResult.github?.pullRequest).toMatch(/^https:\/\//);
+      expect(bareBranches(bare)).toEqual([`refs/heads/forge/${overriddenResult.session}`]);
+    },
+    60_000,
+  );
 });

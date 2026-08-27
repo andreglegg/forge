@@ -487,7 +487,10 @@ function currentEntryMatches(
             : "mismatch";
     return (
       currentRevision === expectedRevision &&
-      (expectedMode === null || expectedMode === undefined || (stat.mode & 0o7777) === expectedMode)
+      (process.platform === "win32" ||
+        expectedMode === null ||
+        expectedMode === undefined ||
+        (stat.mode & 0o7777) === expectedMode)
     );
   } catch {
     return false;
@@ -1797,7 +1800,11 @@ export async function main(
         try {
           if (event.entryType === "directory") {
             mkdirSync(target, { mode: event.beforeMode ?? 0o755 });
-            if (event.beforeMode !== null && event.beforeMode !== undefined) {
+            if (
+              process.platform !== "win32" &&
+              event.beforeMode !== null &&
+              event.beforeMode !== undefined
+            ) {
               chmodSync(target, event.beforeMode);
             }
           } else {
@@ -1815,7 +1822,11 @@ export async function main(
               symlinkSync(content.toString("utf8"), target);
             } else {
               writeFileSync(target, content);
-              if (event.beforeMode !== null && event.beforeMode !== undefined) {
+              if (
+                process.platform !== "win32" &&
+                event.beforeMode !== null &&
+                event.beforeMode !== undefined
+              ) {
                 chmodSync(target, event.beforeMode);
               }
             }
@@ -1848,7 +1859,11 @@ export async function main(
       try {
         mkdirSync(path.dirname(target), { recursive: true });
         writeFileSync(target, content);
-        if (event.beforeMode !== null && event.beforeMode !== undefined) {
+        if (
+          process.platform !== "win32" &&
+          event.beforeMode !== null &&
+          event.beforeMode !== undefined
+        ) {
           chmodSync(target, event.beforeMode);
         }
         io.out(`  ✓ restored ${event.path}`);

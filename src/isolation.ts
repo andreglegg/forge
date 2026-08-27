@@ -11,6 +11,7 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { execBounded } from "./exec.js";
+import { canonicalFilesystemPath, sameFilesystemPath } from "./path-utils.js";
 
 export class IsolationError extends Error {
   constructor(message: string) {
@@ -71,8 +72,8 @@ export async function createIsolatedWorktree(
 ): Promise<IsolatedWorktree> {
   const safeId = safeRunId(id);
   const top = await git(repository, ["rev-parse", "--show-toplevel"]);
-  const canonicalRepository = path.resolve(repository);
-  if (path.resolve(top) !== canonicalRepository) {
+  const canonicalRepository = canonicalFilesystemPath(repository);
+  if (!sameFilesystemPath(top, canonicalRepository)) {
     throw new IsolationError(
       `isolated runs require the repository root; selected ${canonicalRepository}, Git root is ${top}`,
     );

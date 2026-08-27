@@ -243,6 +243,10 @@ function tokenOverlap(wanted: Set<string>, candidate: Set<string>): number {
 const MAX_TREE_ENTRIES = 10_000;
 const MAX_TREE_BYTES = 128 * 1024 * 1024;
 
+function portableMode(mode: number): number {
+  return process.platform === "win32" ? 0 : mode & 0o7777;
+}
+
 interface CapturedTree {
   readonly entries: readonly EntrySnapshot[];
   readonly retained: ReadonlyMap<string, Buffer>;
@@ -333,7 +337,7 @@ function captureTree(root: string, relativeInput: string): CapturedTree {
     }
     const type = entryTypeOf(entryAbsolute);
     const stat = lstatSync(entryAbsolute);
-    const mode = stat.mode & 0o7777;
+    const mode = portableMode(stat.mode);
     if (type === "directory") {
       entries.push({ path: entryRelative, entryType: type, revision: null, mode });
       for (const name of readdirSync(entryAbsolute).sort()) {
@@ -471,7 +475,7 @@ function directoryCreateChange(relative: string): MutationChange {
     beforeRevision: null,
     afterRevision: null,
     beforeMode: null,
-    afterMode: 0o755,
+    afterMode: portableMode(0o755),
     added: 1,
     removed: 0,
   };
@@ -564,7 +568,7 @@ export class Workspace {
     const hunks = diffLines(before, after);
     const baseRevision = beforeBytes === null ? null : revisionOfBytes(beforeBytes);
     const afterRevision = revisionOfContent(after);
-    const mode = exists ? lstatSync(target).mode & 0o7777 : 0o644;
+    const mode = exists ? portableMode(lstatSync(target).mode) : portableMode(0o644);
     const added = hunks.filter((h) => h.kind === "add").length;
     const removed = hunks.filter((h) => h.kind === "remove").length;
     const createdParents = proposal.create ? missingParentDirectories(this.root, relative) : [];
@@ -792,7 +796,9 @@ export class Workspace {
       const mode = preview.changes.find(
         (change) => change.path === preview.path && change.entryType === "file",
       )?.afterMode;
-      if (mode !== null && mode !== undefined) chmodSync(target, mode);
+      if (process.platform !== "win32" && mode !== null && mode !== undefined) {
+        chmodSync(target, mode);
+      }
     } catch (error) {
       for (const absolute of createdParents.reverse()) {
         try {

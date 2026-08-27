@@ -88,6 +88,8 @@ function stubOnPath(config: { response?: string; issueExit?: number } = {}): GhS
   return stub;
 }
 
+const testWithPosixGhStub = test.skipIf(process.platform === "win32");
+
 const ISSUE = {
   number: 7,
   title: "Fix the flaky test",
@@ -133,7 +135,7 @@ describe("parseIssueReference", () => {
 });
 
 describe("fetchIssueTask", () => {
-  test("composes a bounded task from a well-formed gh response", async () => {
+  testWithPosixGhStub("composes a bounded task from a well-formed gh response", async () => {
     const stub = stubOnPath({ response: JSON.stringify(ISSUE) });
     const result = await fetchIssueTask({ issue: 7, repo: null }, stub.dir, "Prefer a minimal fix");
     expect(result.ok).toBe(true);
@@ -149,7 +151,7 @@ describe("fetchIssueTask", () => {
     ]);
   });
 
-  test("passes --repo only for repository-qualified references", async () => {
+  testWithPosixGhStub("passes --repo only for repository-qualified references", async () => {
     const stub = stubOnPath({ response: JSON.stringify(ISSUE) });
     const result = await fetchIssueTask({ issue: 7, repo: "octo/demo" }, stub.dir);
     expect(result.ok).toBe(true);
@@ -158,7 +160,7 @@ describe("fetchIssueTask", () => {
     ]);
   });
 
-  test("head-clips an over-bound body with the truncation marker", async () => {
+  testWithPosixGhStub("head-clips an over-bound body with the truncation marker", async () => {
     const stub = stubOnPath({
       response: JSON.stringify({ ...ISSUE, body: "x".repeat(13_000) }),
     });
@@ -170,7 +172,7 @@ describe("fetchIssueTask", () => {
     expect(longest?.length).toBe(12_000);
   });
 
-  test("refuses malformed JSON with bounded detail", async () => {
+  testWithPosixGhStub("refuses malformed JSON with bounded detail", async () => {
     const stub = stubOnPath({ response: "gh: not json at all" });
     const result = await fetchIssueTask({ issue: 7, repo: null }, stub.dir);
     expect(result.ok).toBe(false);
@@ -179,7 +181,7 @@ describe("fetchIssueTask", () => {
     expect(result.error.length).toBeLessThan(700);
   });
 
-  test("refuses a response missing required fields", async () => {
+  testWithPosixGhStub("refuses a response missing required fields", async () => {
     const stub = stubOnPath({ response: JSON.stringify({ number: 7, title: "t" }) });
     const result = await fetchIssueTask({ issue: 7, repo: null }, stub.dir);
     expect(result.ok).toBe(false);
@@ -187,7 +189,7 @@ describe("fetchIssueTask", () => {
     expect(result.error).toMatch(/body/);
   });
 
-  test("refuses a nonzero gh exit with the error detail", async () => {
+  testWithPosixGhStub("refuses a nonzero gh exit with the error detail", async () => {
     const stub = stubOnPath({
       response: "GraphQL: Could not resolve to an Issue",
       issueExit: 1,
@@ -210,7 +212,7 @@ describe("fetchIssueTask", () => {
 });
 
 describe("credentials", () => {
-  test("forwards GH_TOKEN to gh but never to model commands", async () => {
+  testWithPosixGhStub("forwards GH_TOKEN to gh but never to model commands", async () => {
     const stub = stubOnPath({ response: JSON.stringify(ISSUE) });
     vi.stubEnv("GH_TOKEN", "tok-123");
     const result = await fetchIssueTask({ issue: 7, repo: null }, stub.dir);

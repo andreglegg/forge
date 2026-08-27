@@ -229,7 +229,7 @@ describe("previewed filesystem operations", () => {
         Buffer.from([1, 2, 3, 255]),
       );
       expect(readlinkSync(path.join(root, "archive", "source", "data-link"))).toBe(
-        "nested/data.bin",
+        path.normalize("nested/data.bin"),
       );
     });
   });

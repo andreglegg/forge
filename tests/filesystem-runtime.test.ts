@@ -95,7 +95,9 @@ describe("filesystem runtime and undo", () => {
       expect(code).toBe(0);
       expect(readFileSync(path.join(root, "src", "game.ts"), "utf8")).toContain("game = true");
       expect(readFileSync(path.join(root, "src", "nested", "data.bin"))).toEqual(binary);
-      expect(readlinkSync(path.join(root, "src", "nested", "game-link"))).toBe("../game.ts");
+      expect(readlinkSync(path.join(root, "src", "nested", "game-link"))).toBe(
+        path.normalize("../game.ts"),
+      );
     });
   });
 
@@ -228,17 +230,20 @@ describe("filesystem runtime and undo", () => {
     });
   });
 
-  test("undo refuses a created directory whose mode changed after the session", async () => {
-    await withRepo(async (root) => {
-      await execute(root, "MKDIR generated", "mkdir-mode-change");
-      chmodSync(path.join(root, "generated"), 0o700);
-      const output = capture();
+  test.skipIf(process.platform === "win32")(
+    "undo refuses a created directory whose mode changed after the session",
+    async () => {
+      await withRepo(async (root) => {
+        await execute(root, "MKDIR generated", "mkdir-mode-change");
+        chmodSync(path.join(root, "generated"), 0o700);
+        const output = capture();
 
-      const code = await main(["undo", "mkdir-mode-change", "--repo", root], output.io);
+        const code = await main(["undo", "mkdir-mode-change", "--repo", root], output.io);
 
-      expect(code).toBe(1);
-      expect(existsSync(path.join(root, "generated"))).toBe(true);
-      expect(output.lines.join("\n")).toContain("left untouched");
-    });
-  });
+        expect(code).toBe(1);
+        expect(existsSync(path.join(root, "generated"))).toBe(true);
+        expect(output.lines.join("\n")).toContain("left untouched");
+      });
+    },
+  );
 });

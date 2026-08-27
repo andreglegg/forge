@@ -35,7 +35,7 @@ function usable(runtime: string): boolean {
 
 const CONTAINER_RUNTIME = ["docker", "podman"].find(usable);
 
-const ROOT = "/repo/project";
+const ROOT = path.join(path.parse(process.cwd()).root, "repo", "project");
 
 const cleanup: Array<() => Promise<void>> = [];
 afterEach(async () => {
@@ -86,14 +86,14 @@ describe("container invocation", () => {
   });
 
   test("maps a subdirectory working directory into the mount", () => {
-    const argv = argvFor({}, `${ROOT}/packages/api`);
+    const argv = argvFor({}, path.join(ROOT, "packages", "api"));
     expect(valueAfter(argv, "--workdir")).toBe("/workspace/packages/api");
   });
 
   test("refuses a working directory outside the repository", () => {
     const invocation = containerInvocation(
       ["npm", "test"],
-      { cwd: "/etc", root: ROOT },
+      { cwd: path.join(path.parse(ROOT).root, "outside"), root: ROOT },
       settings(),
     );
     expect(invocation.ok).toBe(false);
@@ -151,8 +151,13 @@ describe("container invocation", () => {
     expect(invocation.command).not.toContain("--env-file");
   });
 
-  test("runs as the invoking user under docker so build output is not root-owned", () => {
-    expect(valueAfter(argvFor({ runtime: "docker" }), "--user")).toMatch(/^\d+:\d+$/);
+  test("runs as the invoking user under docker when uid/gid are available", () => {
+    const user = valueAfter(argvFor({ runtime: "docker" }), "--user");
+    if (typeof process.getuid === "function" && typeof process.getgid === "function") {
+      expect(user).toMatch(/^\d+:\d+$/);
+    } else {
+      expect(user).toBeUndefined();
+    }
   });
 
   test("leaves user mapping to rootless podman", () => {
@@ -303,7 +308,7 @@ describe("backend resolution", () => {
   test.skipIf(usable("podman"))("reports a missing runtime as a failed command", async () => {
     const backend = resolveExecutionBackend({ runtime: "podman", image: "alpine" });
 
-    const result = await backend.run(["true"], { cwd: "/tmp", root: "/tmp" });
+    const result = await backend.run(["true"], { cwd: ROOT, root: ROOT });
 
     expect(result.code).toBeNull();
     expect(result.output).toContain("could not start podman");
@@ -316,71 +321,78 @@ describe("backend resolution", () => {
  * point of these two is that the argv above is accepted by a real runtime and
  * that the isolation it claims is the isolation it gets.
  */
-describe.skipIf(CONTAINER_RUNTIME === undefined)("a real container", () => {
-  const runtime = (CONTAINER_RUNTIME ?? "docker") as "docker" | "podman";
+describe.skipIf(CONTAINER_RUNTIME === undefined || process.platform === "win32")(
+  "a real container",
+  () => {
+    const runtime = (CONTAINER_RUNTIME ?? "docker") as "docker" | "podman";
 
-  test("runs the repository's verification inside the image", async () => {
-    const root = realpathSync(await mkdtemp(path.join(tmpdir(), "forge-container-")));
-    cleanup.push(async () => rm(root, { recursive: true, force: true }));
-    writeFileSync(path.join(root, "check.sh"), "#!/bin/sh\ntest -f /workspace/check.sh\n");
+    test("runs the repository's verification inside the image", async () => {
+      const root = realpathSync(await mkdtemp(path.join(tmpdir(), "forge-container-")));
+      cleanup.push(async () => rm(root, { recursive: true, force: true }));
+      writeFileSync(path.join(root, "check.sh"), "#!/bin/sh\ntest -f /workspace/check.sh\n");
 
-    const backend = resolveExecutionBackend({ runtime, image: "alpine:3" });
-    const report = await verify(
-      { commands: [["sh", "check.sh"]], timeoutSeconds: 180 },
-      { cwd: root, backend },
-    );
+      const backend = resolveExecutionBackend({ runtime, image: "alpine:3" });
+      const report = await verify(
+        { commands: [["sh", "check.sh"]], timeoutSeconds: 180 },
+        { cwd: root, backend },
+      );
 
-    expect(report.passed).toBe(true);
-  }, 300_000);
+      expect(report.passed).toBe(true);
+    }, 300_000);
 
-  test("has no network unless asked", async () => {
-    const root = realpathSync(await mkdtemp(path.join(tmpdir(), "forge-container-net-")));
-    cleanup.push(async () => rm(root, { recursive: true, force: true }));
+    test("has no network unless asked", async () => {
+      const root = realpathSync(await mkdtemp(path.join(tmpdir(), "forge-container-net-")));
+      cleanup.push(async () => rm(root, { recursive: true, force: true }));
 
-    const backend = resolveExecutionBackend({ runtime, image: "alpine:3" });
-    const result = await backend.run(["ping", "-c", "1", "-W", "2", "1.1.1.1"], {
-      cwd: root,
-      root,
-      timeoutSeconds: 120,
-    });
+      const backend = resolveExecutionBackend({ runtime, image: "alpine:3" });
+      const result = await backend.run(["ping", "-c", "1", "-W", "2", "1.1.1.1"], {
+        cwd: root,
+        root,
+        timeoutSeconds: 120,
+      });
 
-    expect(result.code).not.toBe(0);
-  }, 300_000);
+      expect(result.code).not.toBe(0);
+    }, 300_000);
 
-  test("enforces the read-only root while /workspace, /tmp, and HOME stay writable", async () => {
-    const root = realpathSync(await mkdtemp(path.join(tmpdir(), "forge-container-ro-")));
-    cleanup.push(async () => rm(root, { recursive: true, force: true }));
-    writeFileSync(
-      path.join(root, "guard.sh"),
-      [
-        "#!/bin/sh",
-        "touch /etc/forge-marker 2>/dev/null && exit 1",
-        "touch /tmp/ok || exit 2",
-        "touch /workspace/ok || exit 3",
-        'mkdir -p "$HOME/.cache" || exit 4',
-        "exit 0",
-      ].join("\n"),
-    );
+    test("enforces the read-only root while /workspace, /tmp, and HOME stay writable", async () => {
+      const root = realpathSync(await mkdtemp(path.join(tmpdir(), "forge-container-ro-")));
+      cleanup.push(async () => rm(root, { recursive: true, force: true }));
+      writeFileSync(
+        path.join(root, "guard.sh"),
+        [
+          "#!/bin/sh",
+          "touch /etc/forge-marker 2>/dev/null && exit 1",
+          "touch /tmp/ok || exit 2",
+          "touch /workspace/ok || exit 3",
+          'mkdir -p "$HOME/.cache" || exit 4',
+          "exit 0",
+        ].join("\n"),
+      );
 
-    const backend = resolveExecutionBackend({ runtime, image: "alpine:3" });
-    const result = await backend.run(["sh", "guard.sh"], { cwd: root, root, timeoutSeconds: 120 });
+      const backend = resolveExecutionBackend({ runtime, image: "alpine:3" });
+      const result = await backend.run(["sh", "guard.sh"], {
+        cwd: root,
+        root,
+        timeoutSeconds: 120,
+      });
 
-    expect(result.code).toBe(0);
-  }, 300_000);
+      expect(result.code).toBe(0);
+    }, 300_000);
 
-  test("caps the container's process count", async () => {
-    const root = realpathSync(await mkdtemp(path.join(tmpdir(), "forge-container-pids-")));
-    cleanup.push(async () => rm(root, { recursive: true, force: true }));
+    test("caps the container's process count", async () => {
+      const root = realpathSync(await mkdtemp(path.join(tmpdir(), "forge-container-pids-")));
+      cleanup.push(async () => rm(root, { recursive: true, force: true }));
 
-    const backend = resolveExecutionBackend({ runtime, image: "alpine:3" });
-    const result = await backend.run(["cat", "/sys/fs/cgroup/pids.max"], {
-      cwd: root,
-      root,
-      timeoutSeconds: 120,
-    });
+      const backend = resolveExecutionBackend({ runtime, image: "alpine:3" });
+      const result = await backend.run(["cat", "/sys/fs/cgroup/pids.max"], {
+        cwd: root,
+        root,
+        timeoutSeconds: 120,
+      });
 
-    expect(result.code).toBe(0);
-    // Merged output may carry runtime warnings; the readback is its own line.
-    expect(result.output).toMatch(/^512$/m);
-  }, 300_000);
-});
+      expect(result.code).toBe(0);
+      // Merged output may carry runtime warnings; the readback is its own line.
+      expect(result.output).toMatch(/^512$/m);
+    }, 300_000);
+  },
+);

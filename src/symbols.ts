@@ -1,5 +1,6 @@
 import path from "node:path";
 import * as ts from "typescript-compiler";
+import { canonicalFilesystemPath, filesystemPathKey } from "./path-utils.js";
 import type { RepositoryIndex } from "./repository.js";
 import { indexRepository, readRepositoryText } from "./repository.js";
 import { revisionOfContent } from "./workspace.js";
@@ -599,7 +600,9 @@ export function findRepositoryCallers(
   const selected = candidates
     .slice(0, DEFAULT_MAX_FILES)
     .filter((entry) => (entry.bytes ?? 0) <= DEFAULT_MAX_FILE_BYTES);
-  const rootNames = selected.map((entry) => path.join(root, entry.path));
+  const canonicalRoot = canonicalFilesystemPath(root);
+  const rootNames = selected.map((entry) => path.join(canonicalRoot, ...entry.path.split("/")));
+  const rootNameKeys = new Set(rootNames.map(filesystemPathKey));
   const program = ts.createProgram({
     rootNames,
     options: {
@@ -616,7 +619,7 @@ export function findRepositoryCallers(
   const targets = new Set<ts.Symbol>();
 
   for (const sourceFile of program.getSourceFiles()) {
-    if (!rootNames.includes(sourceFile.fileName)) continue;
+    if (!rootNameKeys.has(filesystemPathKey(sourceFile.fileName))) continue;
     const visitDeclaration = (node: ts.Node): void => {
       if (ts.isIdentifier(node) && isDeclarationIdentifier(node)) {
         const name = qualifiedDeclarationName(node);
@@ -636,7 +639,9 @@ export function findRepositoryCallers(
   const matches: RepositoryCaller[] = [];
   if (targets.size > 0) {
     for (const sourceFile of program.getSourceFiles()) {
-      const relative = path.relative(root, sourceFile.fileName).replaceAll("\\", "/");
+      const relative = path
+        .relative(canonicalRoot, canonicalFilesystemPath(sourceFile.fileName))
+        .replaceAll("\\", "/");
       if (!insideScope(relative, scope) || !isSupportedSource(relative)) continue;
       const revision = revisionOfContent(sourceFile.text);
       const visitCall = (node: ts.Node): void => {

@@ -198,6 +198,22 @@ export async function execBounded(
 
       const killGroup = (): void => {
         if (child.pid === undefined) return;
+        if (process.platform === "win32") {
+          const killer = spawn("taskkill.exe", ["/pid", String(child.pid), "/t", "/f"], {
+            env: commandEnvironment(),
+            shell: false,
+            stdio: "ignore",
+            windowsHide: true,
+          });
+          killer.on("error", () => {
+            try {
+              child.kill();
+            } catch {
+              // Already gone.
+            }
+          });
+          return;
+        }
         try {
           process.kill(-child.pid, "SIGKILL");
         } catch {
