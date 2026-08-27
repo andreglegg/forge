@@ -6,6 +6,14 @@ All notable product changes are recorded here. Forge follows semantic versioning
 
 _No changes yet._
 
+## [0.1.2](https://github.com/andreglegg/forge/compare/v0.1.1...v0.1.2) (2026-08-27)
+
+
+### Bug Fixes
+
+* **cli:** keep competitor benchmarks out of product help ([#8](https://github.com/andreglegg/forge/issues/8)) ([63c6a03](https://github.com/andreglegg/forge/commit/63c6a03fca9604e0c027e2a5c85ed30783ce4862))
+* **release:** keep CLI version synchronized ([#9](https://github.com/andreglegg/forge/issues/9)) ([1bd2ca1](https://github.com/andreglegg/forge/commit/1bd2ca138901d8cee91c5b4715ff05317807f1b0))
+
 ## 0.1.1 — 2026-08-27
 
 ### Changed
