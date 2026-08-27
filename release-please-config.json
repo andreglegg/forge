@@ -5,7 +5,12 @@
       "release-type": "node",
       "package-name": "@aglegg/forge-harness",
       "include-component-in-tag": false,
-      "extra-files": ["src/version.ts"]
+      "extra-files": [
+        {
+          "type": "generic",
+          "path": "src/version.ts"
+        }
+      ]
     }
   }
 }
