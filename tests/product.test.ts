@@ -172,6 +172,15 @@ describe("release automation", () => {
     expect(attributes).toMatch(/^\* text=auto eol=lf$/m);
   });
 
+  test("keeps the CLI version in Release Please's generic update path", () => {
+    const releaseConfig = readFileSync("release-please-config.json", "utf8");
+    const versionSource = readFileSync("src/version.ts", "utf8");
+
+    expect(releaseConfig).toContain('"type": "generic"');
+    expect(releaseConfig).toContain('"path": "src/version.ts"');
+    expect(versionSource).toContain("x-release-please-version");
+  });
+
   test("creates reviewed releases and publishes them through npm OIDC", () => {
     const workflow = readFileSync(".github/workflows/release.yml", "utf8");
 
