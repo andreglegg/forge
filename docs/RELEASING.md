@@ -11,8 +11,10 @@ the workflow does not use a long-lived npm token.
 2. Enable private vulnerability reporting and GitHub secret scanning.
 3. Protect `main`: require the CI check, require pull requests, and disallow
    force pushes and branch deletion.
-4. Publish `forge-agent@0.1.0` once from the `v0.1.0` tag checkout using an npm
-   account with two-factor authentication:
+4. Publish `@aglegg/forge-harness@0.1.1` once from the `v0.1.1` tag checkout using an npm
+   account with two-factor authentication. `v0.1.0` was released on GitHub but
+   its unscoped npm name was rejected before publication, so `0.1.1` is the
+   first npm release:
 
    ```sh
    npm ci
@@ -23,10 +25,10 @@ the workflow does not use a long-lived npm token.
 
 5. In npm package settings, add a GitHub Actions trusted publisher for
    repository `andreglegg/forge` and workflow `release.yml`.
-6. Create the initial GitHub release from the existing tag:
+6. Create the corrected initial npm-backed GitHub release from the existing tag:
 
    ```sh
-   gh release create v0.1.0 --verify-tag --generate-notes
+   gh release create v0.1.1 --verify-tag --generate-notes
    ```
 
 The initial manual publish is necessary because npm trusted publishing can only
@@ -39,8 +41,8 @@ an interactive npm credential.
 2. Review and merge the Release Please pull request.
 3. The release workflow creates the GitHub release and tag, runs the complete
    check and build, and publishes that exact version to npm through OIDC.
-4. Confirm the GitHub release, `npm view forge-agent version`, and a clean
-   install with `npm install --global forge-agent@latest`.
+4. Confirm the GitHub release, `npm view @aglegg/forge-harness version`, and a clean
+   install with `npm install --global @aglegg/forge-harness@latest`.
 
 Never edit a published tag or reuse a published npm version. If publishing
 fails after a GitHub release is created, fix the workflow and rerun it against

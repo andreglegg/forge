@@ -1,7 +1,7 @@
 {
-  "name": "forge-agent",
-  "version": "0.1.0",
-  "description": "Local-first coding agent CLI optimized for local and small language models.",
+  "name": "@aglegg/forge-harness",
+  "version": "0.1.1",
+  "description": "Local-first coding-agent harness optimized for local and small language models.",
   "author": "Andre Glegg",
   "repository": {
     "type": "git",

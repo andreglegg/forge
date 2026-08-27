@@ -14,12 +14,12 @@ export default defineConfig({
     // monkeypatching module attributes, so tests import what they use.
     globals: false,
 
-    // Threads with per-file isolation. The suite it replaces makes ~93 real
-    // git invocations and spawns real subprocesses; those must not share a
-    // process, a cwd, or an environment with each other.
+    // Threads with per-file isolation. The suite makes many real Git/process
+    // invocations, so keep concurrency low enough that CLI integration tests
+    // do not fail under local or CI process contention.
     pool: "threads",
     isolate: true,
-    maxWorkers: 4,
+    maxWorkers: 2,
 
     // Real subprocesses (git, the verifier, the syntax validator) are slower
     // to spawn under Node than under CPython. These bounds are for a test that
