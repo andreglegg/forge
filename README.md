@@ -53,8 +53,8 @@ against local Qwen coder models.
 
 | what | result |
 |------|--------|
-| Aider Polyglot, 225 cases | **60.00%** (135/225), +14.4 pp over Little Coder's published 45.56%, one-sided exact binomial `p=9.5e-06` |
-| Paired head-to-head vs Little Coder, 42 pinned cases | **28/42 vs 19/42** (`p=0.012`) and 27/42 (`p=0.008`) |
+| Aider Polyglot, 225 cases | **60.00%** (135/225) |
+| Pinned 42-case model screen | **28/42** and **27/42** across two Forge runs |
 | Local multi-file suite, 14 tasks | **14/14**, 0 false successes, 0 damaged |
 | Greenfield project, unsupervised | **builds it, then over-reports** — see `bench/PROJECT_TRIAL.md` |
 | Model floor | 30B-MoE 64-67%, 14B 12-14%, 7B 4.8% — a cliff, not a gradient |
@@ -132,8 +132,6 @@ forge --version            print the installed version
 forge polyglot <dataset> --name <run>
                           run/resume Aider's 225-case Polyglot benchmark
 forge compare <a> <b>     paired comparison of two Polyglot report files
-forge compare-little-coder <forge-report> <little-coder-report> <case-manifest>
-                          normalize and compare a Little Coder paired run
 
   --profile <name>        select a named profile from forge.json
   --native                use the provider's tool-calling instead of the text
@@ -231,7 +229,7 @@ and repairs, one JSON object per line. Reach for it first when a run misbehaves:
 every early guess about a live failure in this package has been wrong, and the
 trace has settled each one in a single run.
 
-## The path past Little Coder
+## Benchmarking and promotion criteria
 
 The target is not “one run scored higher.” It is a paired, reproducible gain on
 the same cases, model weights, endpoint, budgets, verifier and dataset commit.
@@ -291,11 +289,11 @@ not increase false-success attempts, and does not trade a small score gain for
 a large runtime regression. Then run all 225 official cases by omitting
 `--per-language`. Long runs are atomic and resumable. `--batch-size 6` processes
 six pending cases per invocation if the endpoint needs short supervised batches.
-The default protocol matches Little Coder's published shape: a 12-turn first
-attempt, independent verification, then a fresh eight-turn retry using the test
-failure. The final claim should require a positive paired delta, an exact
-McNemar p-value below 0.05, and a score above the 104/225 Little Coder reference
-on the same model and hardware.
+The default protocol uses a 12-turn first attempt, independent verification,
+then a fresh eight-turn retry using the test failure. A promotion claim should
+require a positive paired delta over the pinned control, an exact McNemar
+p-value below 0.05, no increase in false-success attempts, and no material
+runtime regression on the same model and hardware.
 
 Failures retain the worktree, agent logs, verification output, timeout state,
 failure class, turns, actions and elapsed time. Inspect classes and paired
