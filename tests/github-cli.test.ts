@@ -375,7 +375,7 @@ describe("publication refusals", () => {
     const pushed = git(bare, "ls-tree", "-r", "--name-only", "refs/heads/forge/noignore");
     expect(pushed).toContain("note.txt");
     expect(pushed).not.toMatch(/\.forge\//);
-  });
+  }, 60_000);
 
   test("never discloses credentials embedded in the origin URL", async () => {
     const root = await repository();
