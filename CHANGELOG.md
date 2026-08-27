@@ -6,6 +6,14 @@ All notable product changes are recorded here. Forge follows semantic versioning
 
 _No changes yet._
 
+## [0.1.1](https://github.com/andreglegg/forge/compare/v0.1.0...v0.1.1) (2026-08-27)
+
+
+### Bug Fixes
+
+* **ci:** enforce LF checkouts on Windows ([4485099](https://github.com/andreglegg/forge/commit/448509902413e50123a9a0228493a8e2b384dbb6))
+* **ci:** stabilize cross-platform test suite ([b6c6328](https://github.com/andreglegg/forge/commit/b6c6328136f58b5966a27a6583dd4c0a0624a273))
+
 ## 0.1.0 — 2026-08-27
 
 ### Added
