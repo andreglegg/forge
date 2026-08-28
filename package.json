@@ -1,6 +1,6 @@
 {
   "name": "@aglegg/forge-harness",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Local-first coding-agent harness optimized for local and small language models.",
   "author": "Andre Glegg",
   "repository": {
