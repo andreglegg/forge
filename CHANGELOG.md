@@ -6,6 +6,13 @@ All notable product changes are recorded here. Forge follows semantic versioning
 
 _No changes yet._
 
+## [0.2.2](https://github.com/andreglegg/forge/compare/v0.2.1...v0.2.2) (2026-08-28)
+
+
+### Bug Fixes
+
+* **release:** retry the published npm install ([70ce0d8](https://github.com/andreglegg/forge/commit/70ce0d882d700fed91b123dd7ec40a75ca3ed7c9))
+
 ## [0.2.1](https://github.com/andreglegg/forge/compare/v0.2.0...v0.2.1) (2026-08-27)
 
 
