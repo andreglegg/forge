@@ -52,33 +52,28 @@ jobs:
           set -euo pipefail
           VERSION="${FORGE_TAG#v}"
 
-          for attempt in $(seq 1 12); do
-            if npm view "@aglegg/forge-harness@$VERSION" version --registry=https://registry.npmjs.org/ >/dev/null 2>&1; then
+          for attempt in $(seq 1 24); do
+            SMOKE_REPO="$RUNNER_TEMP/forge-public-smoke-repo-$attempt"
+            mkdir -p "$SMOKE_REPO"
+            printf '{"private":true,"scripts":{"test":"node --test"}}\n' > "$SMOKE_REPO/package.json"
+            export npm_config_cache="$RUNNER_TEMP/forge-public-smoke-cache-$attempt"
+
+            if (
+              cd "$SMOKE_REPO"
+              npm install --ignore-scripts --no-audit --no-fund --save-exact "@aglegg/forge-harness@$VERSION" --registry=https://registry.npmjs.org/
+            ); then
               break
             fi
-            if [ "$attempt" -eq 12 ]; then
-              echo "Timed out waiting for @aglegg/forge-harness@$VERSION to appear on npm." >&2
+            if [ "$attempt" -eq 24 ]; then
+              echo "Timed out waiting for @aglegg/forge-harness@$VERSION to be installable from npm." >&2
               exit 1
             fi
             sleep 5
           done
 
-          export npm_config_cache="$RUNNER_TEMP/forge-public-smoke-cache"
-          SMOKE_REPO="$RUNNER_TEMP/forge-public-smoke-repo"
-          mkdir -p "$SMOKE_REPO"
-          printf '{"scripts":{"test":"node --test"}}\n' > "$SMOKE_REPO/package.json"
-
-          ACTUAL="$(
-            cd "$SMOKE_REPO"
-            npm exec --yes --package="@aglegg/forge-harness@$VERSION" -- forge --version
-          )"
+          export PATH="$SMOKE_REPO/node_modules/.bin:$PATH"
+          ACTUAL="$(cd "$SMOKE_REPO" && forge --version)"
           test "$ACTUAL" = "$VERSION"
 
-          (
-            cd "$SMOKE_REPO"
-            npm exec --yes --package="@aglegg/forge-harness@$VERSION" -- forge help
-          ) | grep -F "Quick start:"
-          (
-            cd "$SMOKE_REPO"
-            npm exec --yes --package="@aglegg/forge-harness@$VERSION" -- forge config --json
-          ) | grep -F "\"version\": \"$VERSION\""
+          (cd "$SMOKE_REPO" && forge help) | grep -F "Quick start:"
+          (cd "$SMOKE_REPO" && forge config --json) | grep -F "\"version\": \"$VERSION\""
