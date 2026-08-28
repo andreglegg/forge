@@ -202,8 +202,12 @@ describe("release automation", () => {
     expect(workflow).toContain("npm run check");
     expect(workflow).toContain("npm publish --access public");
     expect(workflow).toContain("Smoke published npm package");
-    expect(workflow).toContain('npm view "@aglegg/forge-harness@$VERSION"');
-    expect(workflow).toContain('npm exec --yes --package="@aglegg/forge-harness@$VERSION"');
+    expect(workflow).toContain('npm_config_cache="$RUNNER_TEMP/forge-public-smoke-cache-$attempt"');
+    expect(workflow).toContain(
+      'npm install --ignore-scripts --no-audit --no-fund --save-exact "@aglegg/forge-harness@$VERSION"',
+    );
+    expect(workflow).not.toContain('npm view "@aglegg/forge-harness@$VERSION"');
+    expect(workflow).not.toContain('npm exec --yes --package="@aglegg/forge-harness@$VERSION"');
     expect(workflow).toContain("forge --version");
     expect(workflow).toContain("forge help");
     expect(workflow).not.toContain("NPM_TOKEN");
